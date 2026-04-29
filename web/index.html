@@ -268,6 +268,13 @@
   .key.pos-0 .val { background: #6a6a6a; }
   .key.neg-1 .val { background: #a86430; }
   .key.neg-2 .val { background: #b3392b; }
+  /* Auto-penalty for unassigned letters when the pool has been spent. */
+  .key.penalty {
+    border-color: #6a1f15;
+    background: radial-gradient(circle at 30% 30%, #c79590, #8a3b30 60%, #4a1812);
+    color: #fff;
+  }
+  .key.penalty .val { background: #6a1f15; color: #fff; }
   .key.key-ret {
     width: 56px;
     background: radial-gradient(circle at 30% 30%, #fff, #b8a060 60%, #6a4a18);
@@ -753,6 +760,9 @@
   // (would need a -3 type) or merge above TOKEN_MAX (would need a +6 type).
   const TOKEN_MIN = -2;
   const TOKEN_MAX = 5;
+  // If a player runs out of tokens (because they merged the pool down) any
+  // remaining letter in this round's words auto-scores at this penalty when typed.
+  const EMPTY_POOL_PENALTY = -4;
   const RETURN = "_";  // internal symbol for the RETURN key (rendered as ↵)
   const KB_ROWS = ["QWERTYUIOP","ASDFGHJKL","ZXCVBNM" + RETURN];
   const NUM_STATIONS = 6;
@@ -1036,11 +1046,23 @@
 
   function neededLetters(playerIdx) {
     if (game.phase !== "type" || game.typingPlayer !== playerIdx) return new Set();
-    const out = new Set();
     const p = game.players[playerIdx];
+    // No tokens left ⇒ nothing the player can assign; let them press Ready and
+    // any unassigned letter in the round will score EMPTY_POOL_PENALTY when typed.
+    if (p.pool.length === 0) return new Set();
+    const out = new Set();
     for (const w of game.card.picks) if (w) for (const c of w) if (!(c in p.assigned)) out.add(c);
-    // RETURN must also be assigned: it's typed once after each word.
     if (game.card.picks.some(Boolean) && !(RETURN in p.assigned)) out.add(RETURN);
+    return out;
+  }
+
+  // Letters that appear in this round's chosen words (plus RETURN if any words
+  // exist). Independent of assignment state — used for surfacing −4 penalties
+  // on the keyboard when the pool is exhausted.
+  function lettersInRoundWords() {
+    const out = new Set();
+    for (const w of game.card.picks) if (w) for (const c of w) out.add(c);
+    if (game.card.picks.some(Boolean)) out.add(RETURN);
     return out;
   }
 
@@ -1066,9 +1088,10 @@
     const p = game.players[playerIdx];
     const words = game.card.picks.filter(Boolean);
     const seq = [];
+    const valOf = (c) => (c in p.assigned) ? p.assigned[c] : EMPTY_POOL_PENALTY;
     for (const w of words) {
-      for (const c of w) seq.push({ char: c, val: p.assigned[c] });
-      seq.push({ char: RETURN, val: p.assigned[RETURN] });
+      for (const c of w) seq.push({ char: c, val: valOf(c) });
+      seq.push({ char: RETURN, val: valOf(RETURN) });
     }
     return { seq, words };
   }
@@ -1334,25 +1357,32 @@
   function renderKeyboard(idx) {
     const el = document.getElementById(`p${idx+1}Keyboard`);
     const need = neededLetters(idx);
+    const p = game.players[idx];
+    const poolEmpty = p.pool.length === 0;
+    const inRound = (game.phase === "type" || game.phase === "typing-anim")
+      ? lettersInRoundWords() : new Set();
     const isActive = game.phase === "type" && game.typingPlayer === idx;
     const parts = [];
     for (let r = 0; r < KB_ROWS.length; r++) {
       const row = KB_ROWS[r];
       const rowParts = [];
       for (const c of row) {
-        const a = game.players[idx].assigned;
+        const a = p.assigned;
         const v = a[c];
         const assigned = c in a;
+        const willPenalize = !assigned && poolEmpty && inRound.has(c);
         let cls = "key";
         if (assigned) cls += " assigned " + valClass(v);
+        else if (willPenalize) cls += " penalty";
         if (!assigned && need.has(c)) cls += " required";
-        if (isActive && !assigned) cls += " click";
+        if (isActive && !assigned && !poolEmpty) cls += " click";
         if (c === RETURN) cls += " key-ret";
         const label = c === RETURN ? "↵" : c;
+        const valLabel = assigned ? signed(v) : willPenalize ? signed(EMPTY_POOL_PENALTY) : "·";
         rowParts.push(
           `<div class="${cls}" data-letter="${c}" data-pidx="${idx}">
              <div class="letter">${label}</div>
-             <div class="val">${assigned ? signed(v) : "·"}</div>
+             <div class="val">${valLabel}</div>
            </div>`);
       }
       parts.push(`<div class="kbrow r${r+1}">${rowParts.join("")}</div>`);
@@ -1600,11 +1630,14 @@
   }
 
   function scoreWordForPlayer(word, p) {
-    // Treat unassigned letters as the average value of remaining pool tokens.
-    const avg = p.pool.length ? p.pool.reduce((a, b) => a + b.val, 0) / p.pool.length : 0;
+    // Unassigned letters: if there are still tokens, estimate at pool avg; if the
+    // pool is empty, those letters will hard-score at EMPTY_POOL_PENALTY when typed.
+    const fallback = p.pool.length
+      ? p.pool.reduce((a, b) => a + b.val, 0) / p.pool.length
+      : EMPTY_POOL_PENALTY;
     let s = 0;
-    for (const c of word) s += (c in p.assigned) ? p.assigned[c] : avg;
-    s += (RETURN in p.assigned) ? p.assigned[RETURN] : avg;
+    for (const c of word) s += (c in p.assigned) ? p.assigned[c] : fallback;
+    s += (RETURN in p.assigned) ? p.assigned[RETURN] : fallback;
     return s;
   }
 
@@ -1741,7 +1774,11 @@
     const sortedTokens = decoratedTokens.map(x => x.t);
     let i = 0;
     function step() {
-      if (i >= need.length) { onDone(); return; }
+      // Stop when needs are met OR pool is exhausted (remaining letters hard-score
+      // at EMPTY_POOL_PENALTY when typed; nothing to assign).
+      if (i >= need.length || i >= sortedTokens.length || p.pool.length === 0) {
+        onDone(); return;
+      }
       const c = need[i];
       const tok = sortedTokens[i];
       const tIdx = p.pool.findIndex(t => t.id === tok.id);
