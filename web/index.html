@@ -810,6 +810,12 @@
     // P1 is human in "hh" and "ha"; P2 is human only in "hh".
     const isAI = (idx === 0 ? gameMode === "aa" : gameMode !== "hh");
     const pool = buildPool();
+    // Strategy: in CPU-vs-CPU mode the two AIs play opposite styles so the matchup
+    // exercises both halves of the design. P1 = specialist (keeps +5/+4 concentration,
+    // own-score-focused), P2 = generalist (sum-max trades, opp-score-focused).
+    // Other modes get "balanced" (the prior default behavior).
+    let strategy = "balanced";
+    if (gameMode === "aa") strategy = idx === 0 ? "specialist" : "generalist";
     return {
       idx,
       coal: START_COAL,
@@ -820,6 +826,7 @@
       selectedToken: null,
       history: [],                        // [{station, words, score}]
       isAI,
+      strategy,
     };
   }
 
@@ -1209,8 +1216,15 @@
     document.getElementById("roundN").textContent = `${game.station}/${NUM_STATIONS}`;
     document.getElementById("p1Coal").textContent = game.players[0].coal;
     document.getElementById("p2Coal").textContent = game.players[1].coal;
-    document.getElementById("p1Name").textContent = game.players[0].isAI ? "CPU 1" : "PLAYER 1";
-    document.getElementById("p2Name").textContent = game.players[1].isAI ? "CPU 2" : "PLAYER 2";
+    const aiLabel = (p, n) => {
+      if (!p.isAI) return `PLAYER ${n}`;
+      const tag = p.strategy === "specialist" ? " · SPEC"
+                : p.strategy === "generalist" ? " · GEN"
+                : "";
+      return `CPU ${n}${tag}`;
+    };
+    document.getElementById("p1Name").textContent = aiLabel(game.players[0], 1);
+    document.getElementById("p2Name").textContent = aiLabel(game.players[1], 2);
     document.getElementById("phaseTitle").textContent =
       ({ idle: "Round", reveal: "Card Revealed — Bid Coal", bid: "Bidding…",
          "winner-pick": "1st-place Picks", "loser-pick": "2nd-place Picks",
@@ -1522,11 +1536,31 @@
     return c;
   }
 
-  // Greedy pair-wise optimizer: repeatedly does the best (split, merge) pair as long
-  // as combined sum gain is positive. Keeps token count stable. Result: pool sum
-  // typically jumps from +24 (default) to ~+45 with a -2 / -1 residual that can't
-  // be cleared without a 0-delta trade.
+  // Pool optimizer with strategy-dependent behavior.
+  //
+  //   specialist — keep the +5/+4 concentration so a single hot letter scores big.
+  //                Only do beneficial merges (eliminates -2's into -1's, -1's into
+  //                0's, etc.); refuse splits, which would dilute the high tokens.
+  //                Pool count drifts down; sum still rises modestly.
+  //
+  //   generalist / balanced — pair-wise sum-max: while a positive-sum (split, merge)
+  //                pair exists, do both. Token count stays stable; sum on the default
+  //                pool jumps from +24 to ~+48.
   function aiOptimizePool(p, opp, stationsLeft) {
+    if (p.strategy === "specialist") {
+      let guard = 30;
+      while (guard-- > 0) {
+        const counts = poolCounts(p);
+        let bestVal = null, bestDelta = 0;
+        for (let n = TOKEN_MIN; n <= TOKEN_MAX - 1; n++) {
+          const d = 1 - n;
+          if ((counts[n] || 0) >= 2 && d > bestDelta) { bestDelta = d; bestVal = n; }
+        }
+        if (bestVal == null) break;
+        mergeTokens(p, bestVal);
+      }
+      return;
+    }
     let guard = 60;
     while (guard-- > 0) {
       const counts = poolCounts(p);
@@ -1542,7 +1576,6 @@
       }
       if (bestSplitVal == null || bestMergeVal == null) break;
       splitToken(p, bestSplitVal);
-      // Re-find merge in case the split affected its candidate count.
       const counts2 = poolCounts(p);
       let mVal = null, mDelta = 0;
       for (let n = TOKEN_MIN; n <= TOKEN_MAX - 1; n++) {
@@ -1578,9 +1611,16 @@
   // Net advantage of typing a word: my score minus a weighted version of opponent's
   // score. Both players type both words, so picking a word with letters my opponent
   // valued cheaply is doubly good — I gain, they lose.
-  const OPP_WEIGHT = 0.7;
+  // Specialist leans on its own keyboard (high own-score weight, low opp weight).
+  // Generalist's keyboard is flat, so the dominant signal becomes denying the
+  // opponent — they pick words the opponent will struggle on.
+  function strategyOppWeight(p) {
+    if (p.strategy === "specialist") return 0.4;
+    if (p.strategy === "generalist") return 1.0;
+    return 0.7;
+  }
   function netScore(word, p, opp) {
-    return scoreWordForPlayer(word, p) - OPP_WEIGHT * scoreWordForPlayer(word, opp);
+    return scoreWordForPlayer(word, p) - strategyOppWeight(p) * scoreWordForPlayer(word, opp);
   }
 
   function aiBid(playerIdx) {
@@ -1663,7 +1703,13 @@
     // Boldness: ramp from ~1.0 in early rounds down to ~0 in the final round.
     // Stations remaining AFTER this one (5..0). High = take more risk to differentiate
     // from opponent and "place big bets" we can leverage in later rounds.
-    const boldness = stationsLeft / NUM_STATIONS;  // ~0.83 round 1, 0 round 6
+    // Specialists damp boldness (don't randomize the +5/+4 placement away from
+    // top-priority letters); generalists go a bit further with it.
+    const boldnessBase = stationsLeft / NUM_STATIONS;  // ~0.83 round 1, 0 round 6
+    const boldnessMul = p.strategy === "specialist" ? 0.4
+                      : p.strategy === "generalist" ? 1.2
+                      : 1.0;
+    const boldness = boldnessBase * boldnessMul;
 
     // Differentiate from opponent: where opp has already locked a high value on letter
     // L, putting our high token there is wasted — we'll only "match" them. Bias against
