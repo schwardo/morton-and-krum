@@ -1389,12 +1389,12 @@
   function aiPickWord(playerIdx, slot) {
     const p = game.players[playerIdx];
     const cat = slot === 0 ? game.card.template.a : game.card.template.b;
-    let best = null, bestScore = -Infinity;
-    for (const w of PROMPTS[cat]) {
-      const sc = scoreWordForPlayer(w, p);
-      if (sc > bestScore) { bestScore = sc; best = w; }
-    }
-    return best;
+    // Score every choice, then pick randomly among those within 0.5 pts of the best
+    // so two AI players running the same greedy logic don't always converge.
+    const scored = PROMPTS[cat].map(w => ({ w, s: scoreWordForPlayer(w, p) }));
+    const bestScore = Math.max(...scored.map(x => x.s));
+    const top = scored.filter(x => x.s >= bestScore - 0.5);
+    return top[Math.floor(Math.random() * top.length)].w;
   }
 
   function maybeAIPick() {
@@ -1423,10 +1423,16 @@
     for (const w of game.card.picks.filter(Boolean)) {
       for (const c of w) freq[c] = (freq[c] || 0) + 1;
     }
-    // Sort needed letters by descending priority.
-    need.sort((a, b) => letterRank(a, freq[a]) - letterRank(b, freq[b]));
-    // Sort available pool tokens by descending value.
-    const sortedTokens = [...p.pool].sort((a, b) => b.val - a.val);
+    // Sort needed letters by descending priority; random tiebreak so two AI players
+    // with identical state don't pick the same order.
+    const decoratedNeed = need.map(c => ({ c, k: letterRank(c, freq[c]) + (Math.random() - 0.5) * 0.5 }));
+    decoratedNeed.sort((a, b) => a.k - b.k);
+    need.length = 0;
+    for (const x of decoratedNeed) need.push(x.c);
+    // Sort available pool tokens by descending value, with random tiebreak.
+    const decoratedTokens = p.pool.map(t => ({ t, k: t.val + (Math.random() - 0.5) * 0.5 }));
+    decoratedTokens.sort((a, b) => b.k - a.k);
+    const sortedTokens = decoratedTokens.map(x => x.t);
     let i = 0;
     function step() {
       if (i >= need.length) { onDone(); return; }
