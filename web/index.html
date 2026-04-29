@@ -358,6 +358,21 @@
   .token.tn1 { background: #a86430; }
   .token.tn2 { background: #b3392b; }
 
+  /* Trade panel: split/merge controls shown to the active player during typing. */
+  .trades { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .trades .trow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .trades .tlabel { font-size: 9px; letter-spacing: 2px; color: var(--brass); width: 48px; }
+  .trade-btn {
+    background: #1a1410; color: var(--paper);
+    border: 1px solid var(--brass-dark);
+    border-radius: 3px; padding: 2px 6px;
+    font-family: 'Courier New', monospace;
+    font-size: 11px; letter-spacing: 1px;
+    cursor: pointer;
+  }
+  .trade-btn:hover { background: var(--brass-dark); color: #1a1410; }
+  .trade-btn:disabled { opacity: .35; cursor: not-allowed; }
+
   /* Buttons */
   button.primary {
     background: linear-gradient(180deg, var(--brass), var(--brass-dark));
@@ -549,6 +564,7 @@
       <div class="tape" id="p1Tape"></div>
       <div style="font-size:10px;letter-spacing:2px;color:var(--brass);margin-top:6px">TOKEN POOL</div>
       <div class="pool" id="p1Pool"></div>
+      <div class="trades" id="p1Trades"></div>
       <div id="p1Action"></div>
     </div>
 
@@ -564,6 +580,7 @@
       <div class="tape" id="p2Tape"></div>
       <div style="font-size:10px;letter-spacing:2px;color:var(--brass);margin-top:6px">TOKEN POOL</div>
       <div class="pool" id="p2Pool"></div>
+      <div class="trades" id="p2Trades"></div>
       <div id="p2Action"></div>
     </div>
   </div>
@@ -732,6 +749,10 @@
   ];
   // Token pool: 1×+5, 2×+4, 3×+3, 4×+2, 4×+1, 6×0, 4×-1, 3×-2 → 27 tokens (one per key incl. RETURN), sum +24
   const POOL_DEF = [[+5,1],[+4,2],[+3,3],[+2,4],[+1,4],[0,6],[-1,4],[-2,3]];
+  // Token-value bounds (define which trades are legal). Cannot split below TOKEN_MIN
+  // (would need a -3 type) or merge above TOKEN_MAX (would need a +6 type).
+  const TOKEN_MIN = -2;
+  const TOKEN_MAX = 5;
   const RETURN = "_";  // internal symbol for the RETURN key (rendered as ↵)
   const KB_ROWS = ["QWERTYUIOP","ASDFGHJKL","ZXCVBNM" + RETURN];
   const NUM_STATIONS = 6;
@@ -788,12 +809,14 @@
   function makePlayer(idx) {
     // P1 is human in "hh" and "ha"; P2 is human only in "hh".
     const isAI = (idx === 0 ? gameMode === "aa" : gameMode !== "hh");
+    const pool = buildPool();
     return {
       idx,
       coal: START_COAL,
       score: 0,
       assigned: {},                       // letter -> value
-      pool: buildPool(),                  // [{id, val}]
+      pool,                               // [{id, val}]
+      nextTokenId: pool.length,           // monotonic id counter for split/merge results
       selectedToken: null,
       history: [],                        // [{station, words, score}]
       isAI,
@@ -1290,6 +1313,7 @@
     document.getElementById(`p${idx+1}PoolN`).textContent = p.pool.length;
     renderKeyboard(idx);
     renderPool(idx);
+    renderTrades(idx);
     renderActionPanel(idx);
   }
 
@@ -1350,6 +1374,45 @@
         });
       });
     }
+  }
+
+  function renderTrades(idx) {
+    const el = document.getElementById(`p${idx+1}Trades`);
+    if (!el) return;
+    const p = game.players[idx];
+    const isActive = game.phase === "type" && game.typingPlayer === idx && !p.isAI;
+    if (!isActive) { el.innerHTML = ""; return; }
+    const counts = poolCounts(p);
+    const splitBtns = [];
+    for (let n = TOKEN_MAX; n >= TOKEN_MIN + 1; n--) {
+      if ((counts[n] || 0) >= 1) {
+        splitBtns.push(`<button class="trade-btn" data-trade="split" data-val="${n}" data-pidx="${idx}">${signed(n)} → 2×${signed(n-1)}</button>`);
+      }
+    }
+    const mergeBtns = [];
+    for (let n = TOKEN_MAX - 1; n >= TOKEN_MIN; n--) {
+      if ((counts[n] || 0) >= 2) {
+        mergeBtns.push(`<button class="trade-btn" data-trade="merge" data-val="${n}" data-pidx="${idx}">2×${signed(n)} → ${signed(n+1)}</button>`);
+      }
+    }
+    if (splitBtns.length === 0 && mergeBtns.length === 0) { el.innerHTML = ""; return; }
+    el.innerHTML = `
+      ${splitBtns.length ? `<div class="trow"><span class="tlabel">SPLIT</span>${splitBtns.join("")}</div>` : ""}
+      ${mergeBtns.length ? `<div class="trow"><span class="tlabel">MERGE</span>${mergeBtns.join("")}</div>` : ""}
+    `;
+    el.querySelectorAll(".trade-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const v = parseInt(btn.dataset.val, 10);
+        const ok = btn.dataset.trade === "split" ? splitToken(p, v) : mergeTokens(p, v);
+        if (ok) {
+          // If the selected token was consumed by the trade, clear selection.
+          if (p.selectedToken != null && !p.pool.find(t => t.id === p.selectedToken)) {
+            p.selectedToken = null;
+          }
+          render();
+        }
+      });
+    });
   }
 
   function placeSelectedOn(idx, letter) {
@@ -1421,6 +1484,75 @@
     });
   }
   function closeOverlay() { document.getElementById("overlay").classList.remove("open"); }
+
+  // ---------- Trades ----------
+  // Players can reshape their pool by splitting one N-token into two (N-1) tokens
+  // (sum delta: N-2; gainful for N≥3) or merging two N-tokens into one (N+1) token
+  // (sum delta: 1-N; gainful for N≤0). Token count drifts ±1 per trade, so most
+  // useful pair-wise (one split + one merge keeps count stable).
+  function canSplit(val) { return val >= TOKEN_MIN + 1 && val <= TOKEN_MAX; }
+  function canMerge(val) { return val >= TOKEN_MIN && val <= TOKEN_MAX - 1; }
+
+  function splitToken(p, val) {
+    if (!canSplit(val)) return false;
+    const i = p.pool.findIndex(t => t.val === val);
+    if (i < 0) return false;
+    p.pool.splice(i, 1);
+    p.pool.push({ id: p.nextTokenId++, val: val - 1 });
+    p.pool.push({ id: p.nextTokenId++, val: val - 1 });
+    return true;
+  }
+
+  function mergeTokens(p, val) {
+    if (!canMerge(val)) return false;
+    const indices = [];
+    for (let i = 0; i < p.pool.length && indices.length < 2; i++) {
+      if (p.pool[i].val === val) indices.push(i);
+    }
+    if (indices.length < 2) return false;
+    p.pool.splice(indices[1], 1);
+    p.pool.splice(indices[0], 1);
+    p.pool.push({ id: p.nextTokenId++, val: val + 1 });
+    return true;
+  }
+
+  function poolCounts(p) {
+    const c = {};
+    for (const t of p.pool) c[t.val] = (c[t.val] || 0) + 1;
+    return c;
+  }
+
+  // Greedy pair-wise optimizer: repeatedly does the best (split, merge) pair as long
+  // as combined sum gain is positive. Keeps token count stable. Result: pool sum
+  // typically jumps from +24 (default) to ~+45 with a -2 / -1 residual that can't
+  // be cleared without a 0-delta trade.
+  function aiOptimizePool(p, opp, stationsLeft) {
+    let guard = 60;
+    while (guard-- > 0) {
+      const counts = poolCounts(p);
+      let bestSplitVal = null, bestSplitDelta = 0;
+      for (let n = TOKEN_MIN + 1; n <= TOKEN_MAX; n++) {
+        const d = n - 2;
+        if ((counts[n] || 0) >= 1 && d > bestSplitDelta) { bestSplitDelta = d; bestSplitVal = n; }
+      }
+      let bestMergeVal = null, bestMergeDelta = 0;
+      for (let n = TOKEN_MIN; n <= TOKEN_MAX - 1; n++) {
+        const d = 1 - n;
+        if ((counts[n] || 0) >= 2 && d > bestMergeDelta) { bestMergeDelta = d; bestMergeVal = n; }
+      }
+      if (bestSplitVal == null || bestMergeVal == null) break;
+      splitToken(p, bestSplitVal);
+      // Re-find merge in case the split affected its candidate count.
+      const counts2 = poolCounts(p);
+      let mVal = null, mDelta = 0;
+      for (let n = TOKEN_MIN; n <= TOKEN_MAX - 1; n++) {
+        const d = 1 - n;
+        if ((counts2[n] || 0) >= 2 && d > mDelta) { mDelta = d; mVal = n; }
+      }
+      if (mVal == null) break;
+      mergeTokens(p, mVal);
+    }
+  }
 
   // ---------- AI ----------
   // English letter frequency (most common first). Used as a baseline expectation
@@ -1520,6 +1652,10 @@
     const opp = game.players[1 - playerIdx];
     const need = [...neededLetters(playerIdx)];
     if (need.length === 0) { onDone(); return; }
+    // Reshape the pool first (split high tokens, merge low ones) — sum-maximizing.
+    const stationsLeft = NUM_STATIONS - game.station;
+    aiOptimizePool(p, opp, stationsLeft);
+    render();
     const freq = {};
     for (const w of game.card.picks.filter(Boolean)) {
       for (const c of w) freq[c] = (freq[c] || 0) + 1;
@@ -1527,7 +1663,6 @@
     // Boldness: ramp from ~1.0 in early rounds down to ~0 in the final round.
     // Stations remaining AFTER this one (5..0). High = take more risk to differentiate
     // from opponent and "place big bets" we can leverage in later rounds.
-    const stationsLeft = NUM_STATIONS - game.station;
     const boldness = stationsLeft / NUM_STATIONS;  // ~0.83 round 1, 0 round 6
 
     // Differentiate from opponent: where opp has already locked a high value on letter
