@@ -268,6 +268,44 @@
   .key.pos-0 .val { background: #6a6a6a; }
   .key.neg-1 .val { background: #a86430; }
   .key.neg-2 .val { background: #b3392b; }
+  /* Bigram tiles: rectangular tokens shown next to the keyboard for any bigrams
+     this player has claimed. Each one needs a value token assigned during typing. */
+  .bigrams { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 6px 0; min-height: 0; }
+  .bigrams:empty { display: none; }
+  .bigram-tile {
+    min-width: 56px; height: 50px;
+    border-radius: 6px;
+    background: radial-gradient(circle at 30% 30%, #e3d2a8, #b39a6a 60%, #6a4a18);
+    color: #1a1410;
+    border: 2px solid #6a512a;
+    box-shadow: 0 2px 0 #4a3818, 0 2px 3px rgba(0,0,0,.6);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    cursor: default;
+    padding: 0 6px;
+    position: relative;
+  }
+  .bigram-tile.click { cursor: pointer; }
+  .bigram-tile.click:hover { transform: translateY(-1px); }
+  .bigram-tile .bg { font-size: 16px; line-height: 1; letter-spacing: 1px; }
+  .bigram-tile .val {
+    font-size: 10px; line-height: 1;
+    margin-top: 3px;
+    padding: 1px 3px; border-radius: 2px;
+    background: rgba(0,0,0,.65); color: #fff;
+    min-width: 22px; text-align: center;
+  }
+  .bigram-tile.required {
+    box-shadow: 0 0 0 2px #ffea7a, 0 2px 0 #4a3818;
+    animation: pulse 1.2s infinite;
+  }
+  .bigram-tile.typing {
+    animation: typing-flash 1s ease-out;
+    z-index: 2;
+  }
+
   /* Auto-penalty for unassigned letters when the pool has been spent. */
   .key.penalty {
     border-color: #6a1f15;
@@ -568,6 +606,7 @@
         </div>
       </div>
       <div class="keyboard" id="p1Keyboard"></div>
+      <div class="bigrams" id="p1Bigrams"></div>
       <div class="tape" id="p1Tape"></div>
       <div style="font-size:10px;letter-spacing:2px;color:var(--brass);margin-top:6px">TOKEN POOL</div>
       <div class="pool" id="p1Pool"></div>
@@ -584,6 +623,7 @@
         </div>
       </div>
       <div class="keyboard" id="p2Keyboard"></div>
+      <div class="bigrams" id="p2Bigrams"></div>
       <div class="tape" id="p2Tape"></div>
       <div style="font-size:10px;letter-spacing:2px;color:var(--brass);margin-top:6px">TOKEN POOL</div>
       <div class="pool" id="p2Pool"></div>
@@ -802,6 +842,13 @@
   ];
   // Token pool: 1×+5, 2×+4, 3×+3, 4×+2, 4×+1, 6×0, 4×-1, 3×-2 → 27 tokens (one per key incl. RETURN), sum +24
   const POOL_DEF = [[+5,1],[+4,2],[+3,3],[+2,4],[+1,4],[0,6],[-1,4],[-2,3]];
+  // Bigram tokens: shared pool. During the word-selection phase, a player may claim
+  // one of these instead of picking a word. A claimed bigram needs a value token
+  // assigned to it (alongside letters during typing-phase assignment); each time
+  // it's used in a typed word, the player scores assigned + BIGRAM_BONUS instead
+  // of typing the two underlying letters individually.
+  const BIGRAMS = ["EE","OO","OU","EA","ST","GH","CK","CH"];
+  const BIGRAM_BONUS = 5;
   // Token-value bounds (define which trades are legal). Cannot split below TOKEN_MIN
   // (would need a -3 type) or merge above TOKEN_MAX (would need a +6 type).
   const TOKEN_MIN = -2;
@@ -813,6 +860,31 @@
   const KB_ROWS = ["QWERTYUIOP","ASDFGHJKL","ZXCVBNM" + RETURN];
   const NUM_STATIONS = 6;
   const START_COAL = 30;
+
+  // Helper: count non-overlapping occurrences of a 2-char bigram in a word
+  // (greedy left-to-right; matches the typing-phase substitution).
+  function bigramOccurrences(word, bg) {
+    let count = 0, i = 0;
+    while (i <= word.length - 2) {
+      if (word[i] === bg[0] && word[i+1] === bg[1]) { count++; i += 2; }
+      else i++;
+    }
+    return count;
+  }
+  // Average occurrences per word across all PROMPTS — used by the AI to estimate
+  // the expected number of times a claimed bigram will fire over the rest of the
+  // game. Computed once at startup.
+  const BIGRAM_FREQ = (() => {
+    const out = {};
+    for (const bg of BIGRAMS) {
+      let total = 0, n = 0;
+      for (const cat of Object.keys(PROMPTS)) {
+        for (const w of PROMPTS[cat]) { total += bigramOccurrences(w, bg); n++; }
+      }
+      out[bg] = n ? total / n : 0;
+    }
+    return out;
+  })();
 
   // Train positions along the central track stretch on the rotated board.
   // Index 0 = before round 1; indices 1..6 = positions reached after rounds 1..6.
@@ -842,6 +914,10 @@
       // lane: 0 = front (current leader), 1 = back. P1 starts in front by default.
       laneOrder: [0, 1],                  // laneOrder[lane] = playerIdx; index 0 is front
       history: [],                        // per-round summaries
+      bigramPool: [...BIGRAMS],           // shared pool, depleted as players claim
+      pickPass: 1,                        // 1 = bigrams allowed; 2 = words only
+      passOneActed: [false, false],       // each player's pass-1 action committed?
+      wordPickedBy: [false, false],       // has player N picked a word this round?
     };
     setMessage("");
     closeOverlay();
@@ -883,6 +959,8 @@
       history: [],                        // [{station, words, score}]
       isAI,
       strategy,
+      claimedBigrams: [],                 // bigrams this player has claimed
+      bigramAssigned: {},                 // bigram -> assigned token value
     };
   }
 
@@ -902,6 +980,9 @@
     game.card = game.cards[game.station - 1];
     game.bids = [null, null];
     game.winnerIdx = null;
+    game.pickPass = 1;
+    game.passOneActed = [false, false];
+    game.wordPickedBy = [false, false];
     game.phase = "reveal";
     clearTapes();
     setMessage(`Station ${game.station}: telegram card revealed.`);
@@ -974,84 +1055,139 @@
       whoText: `Player ${winner + 1} arrives first`,
       body: `<p>P1 bid <strong>${b1}</strong> · P2 bid <strong>${b2}</strong>${tieNote}.</p>
              <p>Player ${winner + 1} now picks one telegram blank and chooses a word for it. The other blank goes to Player ${2 - winner}.</p>`,
-      buttons: [{ label: "Continue", primary: true, action: () => { closeOverlay(); render(); maybeAIPick(); } }],
+      buttons: [{ label: "Continue", primary: true, action: () => { closeOverlay(); render(); advancePickPhase(); } }],
     });
     render();
   }
 
-  function pickBlank(slot) {
-    if (game.phase === "winner-pick" && game.card.picks[slot] == null) showWordPicker(game.winnerIdx, slot);
-    else if (game.phase === "loser-pick" && game.card.picks[slot] == null) showWordPicker(1 - game.winnerIdx, slot);
-  }
-
-  function commitPick(slot, word) {
+  function commitPick(playerIdx, slot, word) {
     game.card.picks[slot] = word;
+    game.wordPickedBy[playerIdx] = true;
+    if (game.pickPass === 1) game.passOneActed[playerIdx] = true;
     setMessage("");
     closeOverlay();
-    if (game.phase === "winner-pick") {
-      game.phase = "loser-pick";
-      render();
-      setTimeout(() => promptLoserPick(), 200);
-    } else if (game.phase === "loser-pick") {
-      afterPicksDone();
-    }
+    setTimeout(() => advancePickPhase(), 150);
   }
 
-  function showWordPicker(playerIdx, slot) {
-    const cat = slot === 0 ? game.card.template.a : game.card.template.b;
-    const choices = PROMPTS[cat];
+  function commitBigram(playerIdx, bg) {
+    if (!game.bigramPool.includes(bg)) return;
+    game.bigramPool = game.bigramPool.filter(b => b !== bg);
+    game.players[playerIdx].claimedBigrams.push(bg);
+    if (game.pickPass === 1) game.passOneActed[playerIdx] = true;
+    setMessage("");
+    closeOverlay();
+    setTimeout(() => advancePickPhase(), 150);
+  }
+
+  // Drives the word-selection flow. Pass 1: each player gets one action and may
+  // choose a word OR claim a bigram. Pass 2 (only if a slot is still empty):
+  // players who haven't picked a word must do so now; bigrams are not allowed.
+  function advancePickPhase() {
+    if (game.card.picks.every(Boolean)) { afterPicksDone(); return; }
+    const winner = game.winnerIdx, loser = 1 - winner;
+    let nextPlayer = null;
+    if (game.pickPass === 1) {
+      if (!game.passOneActed[winner]) nextPlayer = winner;
+      else if (!game.passOneActed[loser]) nextPlayer = loser;
+      else game.pickPass = 2;
+    }
+    if (game.pickPass === 2 && nextPlayer == null) {
+      if (!game.wordPickedBy[winner]) nextPlayer = winner;
+      else if (!game.wordPickedBy[loser]) nextPlayer = loser;
+    }
+    if (nextPlayer == null) { afterPicksDone(); return; }
+    game.phase = nextPlayer === winner ? "winner-pick" : "loser-pick";
+    promptPickAction(nextPlayer, game.pickPass === 1);
+  }
+
+  function promptPickAction(playerIdx, allowBigram) {
     const p = game.players[playerIdx];
     if (p.isAI) {
       setMessage(`CPU ${playerIdx + 1} is choosing…`);
       setTimeout(() => {
-        try { commitPick(slot, aiPickWord(playerIdx, slot)); }
-        catch (e) {
-          console.error("AI word pick threw:", e);
+        try {
+          const action = aiPickAction(playerIdx, allowBigram);
+          if (action.kind === "bigram") commitBigram(playerIdx, action.bg);
+          else commitPick(playerIdx, action.slot, action.word);
+        } catch (e) {
+          console.error("AI pick action threw:", e);
           setMessage("AI error: " + e.message + " (see console)", true);
         }
       }, AI_THINK_MS);
       return;
     }
-    const commit = (raw) => {
-      const w = (raw || "").toUpperCase().replace(/[^A-Z]/g, "");
+    showActionPicker(playerIdx, allowBigram);
+  }
+
+  function showActionPicker(playerIdx, allowBigram) {
+    const tpl = game.card.template;
+    const emptySlots = [0, 1].filter(s => game.card.picks[s] == null);
+    const slotSections = emptySlots.map(slot => {
+      const cat = slot === 0 ? tpl.a : tpl.b;
+      const slotLabel = slot === 0 ? "A" : "B";
+      const choices = PROMPTS[cat]
+        .map(w => `<button class="wordChoice" data-act="word" data-slot="${slot}" data-w="${w}">${w}</button>`)
+        .join("");
+      return `
+        <div style="margin-top:8px">
+          <div style="font-size:11px;letter-spacing:2px;color:var(--brass);margin-bottom:4px">
+            SLOT ${slotLabel} — ${PROMPT_LABELS[cat].toUpperCase()}
+          </div>
+          <div class="wordOptions">${choices}</div>
+        </div>`;
+    }).join("");
+    const bigramSection = allowBigram && game.bigramPool.length > 0 ? `
+      <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--brass-dark)">
+        <div style="font-size:11px;letter-spacing:2px;color:var(--brass);margin-bottom:4px">
+          — OR CLAIM A BIGRAM TOKEN —
+        </div>
+        <div class="wordOptions">${game.bigramPool.map(bg =>
+          `<button class="wordChoice bigramChoice" data-act="bigram" data-bg="${bg}">${bg}</button>`
+        ).join("")}</div>
+      </div>` : "";
+    const customSection = `
+      <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--brass-dark)">
+        <div style="font-size:11px;letter-spacing:2px;color:var(--brass);margin-bottom:4px">
+          — OR ENTER YOUR OWN WORD —
+        </div>
+        <div style="display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap">
+          <select id="customSlot" style="background:var(--paper);color:var(--ink);border:1px solid var(--brass-dark);padding:5px;font-family:'Courier New',monospace;font-size:13px">
+            ${emptySlots.map(s => `<option value="${s}">Slot ${s===0?"A":"B"} — ${PROMPT_LABELS[s===0?tpl.a:tpl.b]}</option>`).join("")}
+          </select>
+          <input type="text" id="customWord" maxlength="20" placeholder="A-Z ONLY"
+                 style="background:var(--paper);color:var(--ink);border:1px solid var(--brass-dark);
+                        padding:6px 10px;font-family:'Courier New',monospace;font-size:14px;
+                        letter-spacing:2px;text-align:center;width:160px;border-radius:3px;text-transform:uppercase" />
+          <button class="ghost" id="customBtn">Use Custom</button>
+        </div>
+      </div>`;
+    showModal({
+      title: allowBigram ? "PICK WORD OR CLAIM BIGRAM" : "PICK A WORD",
+      whoClass: playerIdx === 0 ? "p1" : "p2",
+      whoText: `Player ${playerIdx + 1}`,
+      body: slotSections + bigramSection + customSection,
+      buttons: [],
+    });
+    document.querySelectorAll(".wordChoice").forEach(btn => {
+      btn.addEventListener("click", () => {
+        if (btn.dataset.act === "bigram") commitBigram(playerIdx, btn.dataset.bg);
+        else commitPick(playerIdx, parseInt(btn.dataset.slot, 10), btn.dataset.w);
+      });
+    });
+    const inp = document.getElementById("customWord");
+    const sel = document.getElementById("customSlot");
+    const cb  = document.getElementById("customBtn");
+    const submitCustom = () => {
+      const w = (inp.value || "").toUpperCase().replace(/[^A-Z]/g, "");
       if (!w || w.length > 20) {
-        const inp = document.getElementById("customWord");
         if (inp) { inp.classList.add("err"); inp.focus(); }
         setMessage("Custom word must be 1–20 letters (A–Z).", true);
         return;
       }
-      commitPick(slot, w);
+      commitPick(playerIdx, parseInt(sel.value, 10), w);
     };
-    showModal({
-      title: `${PROMPT_LABELS[cat].toUpperCase()} (slot ${slot===0?"A":"B"})`,
-      whoClass: playerIdx === 0 ? "p1" : "p2",
-      whoText: `Player ${playerIdx + 1} picks`,
-      body: `<p>Choose a word for "<em>${PROMPT_LABELS[cat]}</em>":</p>
-             <div class="wordOptions">${choices.map(w => `<button class="wordChoice" data-w="${w}">${w}</button>`).join("")}</div>
-             <div style="margin-top:10px;font-size:11px;letter-spacing:2px;color:var(--brass)">— OR ENTER YOUR OWN —</div>
-             <div style="display:flex;gap:8px;justify-content:center;margin-top:6px">
-               <input type="text" id="customWord" maxlength="20" placeholder="A-Z ONLY"
-                      style="background:var(--paper);color:var(--ink);border:1px solid var(--brass-dark);
-                             padding:6px 10px;font-family:'Courier New',monospace;font-size:14px;
-                             letter-spacing:2px;text-align:center;width:160px;border-radius:3px;text-transform:uppercase" />
-               <button class="ghost" id="customBtn">Use Custom</button>
-             </div>`,
-      buttons: [],
-    });
-    document.querySelectorAll(".wordChoice").forEach(btn => {
-      btn.addEventListener("click", () => commit(btn.dataset.w));
-    });
-    const inp = document.getElementById("customWord");
-    const cb  = document.getElementById("customBtn");
-    if (cb)  cb.addEventListener("click", () => commit(inp.value));
-    if (inp) inp.addEventListener("keydown", (e) => { if (e.key === "Enter") commit(inp.value); });
-  }
-
-  function promptLoserPick() {
-    const emptySlot = game.card.picks[0] == null ? 0 : 1;
-    const loser = 1 - game.winnerIdx;
-    const cat = emptySlot === 0 ? game.card.template.a : game.card.template.b;
-    showWordPicker(loser, emptySlot);
+    if (cb)  cb.addEventListener("click", submitCustom);
+    if (inp) inp.addEventListener("keydown", (e) => { if (e.key === "Enter") submitCustom(); });
   }
 
   function afterPicksDone() {
@@ -1090,15 +1226,19 @@
     });
   }
 
+  // Returns assignment targets the player still owes a token to: round letters
+  // that haven't been assigned yet, plus any claimed bigrams without a value.
+  // Letters are 1-char strings; bigrams are 2-char strings, distinguishable by
+  // length. Empty when the pool is exhausted (Ready unblocks; remaining items
+  // hard-score at EMPTY_POOL_PENALTY when typed).
   function neededLetters(playerIdx) {
     if (game.phase !== "type" || game.typingPlayer !== playerIdx) return new Set();
     const p = game.players[playerIdx];
-    // No tokens left ⇒ nothing the player can assign; let them press Ready and
-    // any unassigned letter in the round will score EMPTY_POOL_PENALTY when typed.
     if (p.pool.length === 0) return new Set();
     const out = new Set();
     for (const w of game.card.picks) if (w) for (const c of w) if (!(c in p.assigned)) out.add(c);
     if (game.card.picks.some(Boolean) && !(RETURN in p.assigned)) out.add(RETURN);
+    for (const bg of p.claimedBigrams) if (!(bg in p.bigramAssigned)) out.add(bg);
     return out;
   }
 
@@ -1135,8 +1275,27 @@
     const words = game.card.picks.filter(Boolean);
     const seq = [];
     const valOf = (c) => (c in p.assigned) ? p.assigned[c] : EMPTY_POOL_PENALTY;
+    // Greedy left-to-right: at each position, if a claimed-and-assigned bigram
+    // matches the next two chars, fire the bigram (skipping both letters) and
+    // score (assigned + BIGRAM_BONUS). Otherwise type the single letter.
+    const matchBigram = (w, i) => {
+      if (i > w.length - 2) return null;
+      const next2 = w.slice(i, i + 2);
+      if (p.claimedBigrams.includes(next2) && (next2 in p.bigramAssigned)) return next2;
+      return null;
+    };
     for (const w of words) {
-      for (const c of w) seq.push({ char: c, val: valOf(c) });
+      let i = 0;
+      while (i < w.length) {
+        const bg = matchBigram(w, i);
+        if (bg) {
+          seq.push({ char: bg, val: p.bigramAssigned[bg] + BIGRAM_BONUS, kind: "bigram" });
+          i += 2;
+        } else {
+          seq.push({ char: w[i], val: valOf(w[i]) });
+          i++;
+        }
+      }
       seq.push({ char: RETURN, val: valOf(RETURN) });
     }
     return { seq, words };
@@ -1197,16 +1356,16 @@
   }
 
   function flashKey(playerIdx, char, val) {
-    const kbEl = document.getElementById(`p${playerIdx + 1}Keyboard`);
-    if (!kbEl) return;
-    const node = kbEl.querySelector(`.key[data-letter="${char === RETURN ? "_" : char}"]`);
-    if (!node) return;
-    // Restart animation by removing/re-adding class.
-    node.classList.remove("typing"); void node.offsetWidth; node.classList.add("typing");
-    // Score popup near the key.
-    const rect = node.getBoundingClientRect();
-    const wrap = node.closest(".player");
+    // 2-char strings are bigrams → flash the bigram tile instead of a key.
+    const isBigram = char.length === 2;
+    const wrap = document.getElementById(`player${playerIdx + 1}`);
     if (!wrap) return;
+    const node = isBigram
+      ? document.querySelector(`#p${playerIdx + 1}Bigrams .bigram-tile[data-bg="${char}"]`)
+      : document.querySelector(`#p${playerIdx + 1}Keyboard .key[data-letter="${char === RETURN ? "_" : char}"]`);
+    if (!node) return;
+    node.classList.remove("typing"); void node.offsetWidth; node.classList.add("typing");
+    const rect = node.getBoundingClientRect();
     const wrapRect = wrap.getBoundingClientRect();
     const pop = document.createElement("div");
     pop.className = "score-pop " + (val > 0 ? "pos" : val < 0 ? "neg" : "zero");
@@ -1382,10 +1541,15 @@
     html = html.replaceAll("%A", "@@A@@").replaceAll("%B", "@@B@@");
     html = html.split("@@A@@").join(slotHTML(0));
     html = html.split("@@B@@").join(slotHTML(1));
-    // Wire clicks after we set innerHTML
+    // Wire clicks after we set innerHTML — clicking a pickable blank reopens the
+    // action picker for whoever's turn it is (in case the modal was dismissed).
     setTimeout(() => {
       document.querySelectorAll("#cardBody .blank.pickable").forEach(el =>
-        el.addEventListener("click", () => pickBlank(parseInt(el.dataset.slot, 10))));
+        el.addEventListener("click", () => {
+          const winner = game.winnerIdx, loser = 1 - winner;
+          if (game.phase === "winner-pick") promptPickAction(winner, game.pickPass === 1);
+          else if (game.phase === "loser-pick") promptPickAction(loser, game.pickPass === 1);
+        }));
     }, 0);
     return html;
   }
@@ -1395,9 +1559,36 @@
     document.getElementById(`p${idx+1}Score`).textContent = p.score;
     document.getElementById(`p${idx+1}PoolN`).textContent = p.pool.length;
     renderKeyboard(idx);
+    renderBigrams(idx);
     renderPool(idx);
     renderTrades(idx);
     renderActionPanel(idx);
+  }
+
+  function renderBigrams(idx) {
+    const el = document.getElementById(`p${idx+1}Bigrams`);
+    if (!el) return;
+    const p = game.players[idx];
+    if (p.claimedBigrams.length === 0) { el.innerHTML = ""; return; }
+    const isActive = game.phase === "type" && game.typingPlayer === idx;
+    const need = neededLetters(idx);
+    el.innerHTML = p.claimedBigrams.map(bg => {
+      const assigned = bg in p.bigramAssigned;
+      const v = p.bigramAssigned[bg];
+      const valLabel = assigned ? `${signed(v)}+${BIGRAM_BONUS}` : "·";
+      let cls = "bigram-tile";
+      if (!assigned && need.has(bg)) cls += " required";
+      if (isActive && !assigned) cls += " click";
+      return `<div class="${cls}" data-bg="${bg}" data-pidx="${idx}">
+                <div class="bg">${bg}</div>
+                <div class="val">${valLabel}</div>
+              </div>`;
+    }).join("");
+    if (isActive) {
+      el.querySelectorAll(".bigram-tile.click").forEach(node => {
+        node.addEventListener("click", () => placeSelectedOn(idx, node.dataset.bg));
+      });
+    }
   }
 
   function renderKeyboard(idx) {
@@ -1505,13 +1696,18 @@
     });
   }
 
-  function placeSelectedOn(idx, letter) {
+  function placeSelectedOn(idx, target) {
     const p = game.players[idx];
-    if (letter in p.assigned) { setMessage(`${letter} already valued at ${signed(p.assigned[letter])}.`); return; }
+    const isBigram = target.length === 2;
+    const map = isBigram ? p.bigramAssigned : p.assigned;
+    if (target in map) {
+      setMessage(`${target} already valued at ${signed(map[target])}.`);
+      return;
+    }
     if (p.selectedToken == null) { setMessage("Select a token first."); return; }
     const i = p.pool.findIndex(t => t.id === p.selectedToken);
     if (i < 0) { p.selectedToken = null; return; }
-    p.assigned[letter] = p.pool[i].val;
+    map[target] = p.pool[i].val;
     p.pool.splice(i, 1);
     p.selectedToken = null;
     setMessage("");
@@ -1668,11 +1864,27 @@
   function scoreWordForPlayer(word, p) {
     // Unassigned letters: if there are still tokens, estimate at pool avg; if the
     // pool is empty, those letters will hard-score at EMPTY_POOL_PENALTY when typed.
+    // Greedy left-to-right bigram substitution mirrors buildTypingSeq: for each
+    // claimed bigram with an assigned (or pending) value, replace its 2-letter run
+    // with (val + BIGRAM_BONUS).
     const fallback = p.pool.length
       ? p.pool.reduce((a, b) => a + b.val, 0) / p.pool.length
       : EMPTY_POOL_PENALTY;
+    const valOf = (c) => (c in p.assigned) ? p.assigned[c] : fallback;
+    const bgValOf = (bg) => (bg in p.bigramAssigned)
+      ? p.bigramAssigned[bg] + BIGRAM_BONUS
+      : fallback + BIGRAM_BONUS;  // pending claim — assume avg token will land here
     let s = 0;
-    for (const c of word) s += (c in p.assigned) ? p.assigned[c] : fallback;
+    let i = 0;
+    while (i < word.length) {
+      let matchedBg = null;
+      if (i <= word.length - 2) {
+        const next2 = word.slice(i, i + 2);
+        if (p.claimedBigrams.includes(next2)) matchedBg = next2;
+      }
+      if (matchedBg) { s += bgValOf(matchedBg); i += 2; }
+      else { s += valOf(word[i]); i++; }
+    }
     s += (RETURN in p.assigned) ? p.assigned[RETURN] : fallback;
     return s;
   }
@@ -1714,46 +1926,74 @@
     return bid;
   }
 
-  function aiPickSlot(playerIdx) {
-    const p = game.players[playerIdx];
-    const opp = game.players[1 - playerIdx];
+  // Best (slot, word, score) over the currently-empty slots.
+  function aiBestWordOption(p, opp) {
     const tpl = game.card.template;
-    const bestNetIn = (catKey) => {
-      let best = -Infinity;
-      for (const w of PROMPTS[catKey]) best = Math.max(best, netScore(w, p, opp));
-      return best;
-    };
-    return bestNetIn(tpl.a) >= bestNetIn(tpl.b) ? 0 : 1;
+    let best = null;
+    for (const slot of [0, 1]) {
+      if (game.card.picks[slot] != null) continue;
+      const cat = slot === 0 ? tpl.a : tpl.b;
+      for (const w of PROMPTS[cat]) {
+        const s = netScore(w, p, opp);
+        if (best == null || s > best.s) best = { s, slot, w };
+      }
+    }
+    return best;
   }
 
-  function aiPickWord(playerIdx, slot) {
+  // Decide whether to claim a bigram or pick a word. Pass `allowBigram=false` in
+  // pass 2 to force a word pick.
+  function aiPickAction(playerIdx, allowBigram) {
     const p = game.players[playerIdx];
     const opp = game.players[1 - playerIdx];
-    const cat = slot === 0 ? game.card.template.a : game.card.template.b;
-    // Maximize my net advantage: high in my keyboard, low in theirs.
-    // Tiebreak randomly among picks within 0.5 pts of best.
-    const scored = PROMPTS[cat].map(w => ({ w, s: netScore(w, p, opp) }));
-    const bestScore = Math.max(...scored.map(x => x.s));
-    const top = scored.filter(x => x.s >= bestScore - 0.5);
-    return top[Math.floor(Math.random() * top.length)].w;
-  }
+    const stationsLeft = NUM_STATIONS - game.station;  // remaining rounds AFTER this one
 
-  function maybeAIPick() {
-    if (game.phase !== "winner-pick") return;
-    if (game.players[game.winnerIdx].isAI) {
-      setMessage(`CPU ${game.winnerIdx + 1} is choosing…`);
-      setTimeout(() => {
-        try {
-          const slot = aiPickSlot(game.winnerIdx);
-          commitPick(slot, aiPickWord(game.winnerIdx, slot));
-        } catch (e) {
-          console.error("AI pick flow threw:", e);
-          setMessage("AI error: " + e.message + " (see console)", true);
-        }
-      }, AI_THINK_MS);
-    } else {
-      setMessage(`Player ${game.winnerIdx + 1}: click a blank on the telegram card to pick a word.`);
+    // Best word over empty slots, with random tie-break among picks within 0.5.
+    const tpl = game.card.template;
+    const wordOptions = [];
+    for (const slot of [0, 1]) {
+      if (game.card.picks[slot] != null) continue;
+      const cat = slot === 0 ? tpl.a : tpl.b;
+      for (const w of PROMPTS[cat]) wordOptions.push({ s: netScore(w, p, opp), slot, w });
     }
+    const bestWordScore = Math.max(...wordOptions.map(x => x.s));
+    const wordPick = wordOptions
+      .filter(x => x.s >= bestWordScore - 0.5)
+      [Math.floor(Math.random() * wordOptions.filter(x => x.s >= bestWordScore - 0.5).length)];
+
+    if (!allowBigram || game.bigramPool.length === 0) {
+      return { kind: "word", slot: wordPick.slot, word: wordPick.w };
+    }
+
+    // Bigram EV: for each candidate, estimate per-use gain by comparing the bigram
+    // payout (assumed +0 token assigned + BIGRAM_BONUS = +5) against the player's
+    // actual letter values for the underlying two letters. Multiply by expected
+    // future uses across remaining rounds.
+    const avgPoolVal = p.pool.length
+      ? p.pool.reduce((a, b) => a + b.val, 0) / p.pool.length
+      : EMPTY_POOL_PENALTY;
+    const letterVal = (c) => (c in p.assigned) ? p.assigned[c] : avgPoolVal;
+    const stationsAhead = stationsLeft + 1;
+    const assumedBigramTokenVal = 0;  // AI plans to spend a +0 (or worst free) token
+    let bestBg = null;
+    for (const bg of game.bigramPool) {
+      const expectedUses = (BIGRAM_FREQ[bg] || 0) * 2 * stationsAhead;
+      const letterCost = letterVal(bg[0]) + letterVal(bg[1]);
+      const perUseGain = (assumedBigramTokenVal + BIGRAM_BONUS) - letterCost;
+      const ev = expectedUses * perUseGain;
+      if (bestBg == null || ev > bestBg.ev) bestBg = { bg, ev };
+    }
+
+    // Take the bigram only if EV clearly clears the opportunity cost. Sim shows
+    // bigrams are a trap for naive AIs: at threshold 3 SPEC claims ~0.9/game and
+    // its win rate drops from 50% to 31%; at threshold ≥5 SPEC never claims and
+    // win rate stays at 50%. Keep the bar high until a smarter heuristic exists
+    // — the mechanic is still available to humans, and the AI scores opp's
+    // claimed bigrams correctly via scoreWordForPlayer when picking words.
+    if (bestBg && bestBg.ev > 8) {
+      return { kind: "bigram", bg: bestBg.bg };
+    }
+    return { kind: "word", slot: wordPick.slot, word: wordPick.w };
   }
 
   function aiAssignFlow(playerIdx, onDone) {
@@ -1791,11 +2031,23 @@
       return Math.max(0, v) * 0.6;  // only penalize where opp is positive
     };
 
-    // Sort needed letters by ascending rank (lower rank = higher priority), with bias
+    // Bigrams are top-priority targets: each use earns a flat +BIGRAM_BONUS on top
+    // of the assigned token's value, so even a +0 token on a frequently-firing
+    // bigram beats placing the same +0 token on a single letter. Rank them well
+    // below (more negative than) any letter rank.
+    const targetRank = (c, freqInRound) => {
+      if (c.length === 2) {
+        const expectedUses = (BIGRAM_FREQ[c] || 0) * 2 * (NUM_STATIONS - game.station + 1);
+        return -10 - expectedUses * 5;
+      }
+      return letterRank(c, freqInRound);
+    };
+
+    // Sort needed targets by ascending rank (lower rank = higher priority), with bias
     // away from opp-strong letters and a jitter that grows with boldness.
     const decoratedNeed = need.map(c => ({
       c,
-      k: letterRank(c, freq[c]) + oppPenalty(c)
+      k: targetRank(c, freq[c]) + (c.length === 2 ? 0 : oppPenalty(c))
          + (Math.random() - 0.5) * (1 + 4 * boldness)
     }));
     decoratedNeed.sort((a, b) => a.k - b.k);
@@ -1821,7 +2073,9 @@
       const tok = sortedTokens[i];
       const tIdx = p.pool.findIndex(t => t.id === tok.id);
       if (tIdx >= 0) {
-        p.assigned[c] = p.pool[tIdx].val;
+        const v = p.pool[tIdx].val;
+        if (c.length === 2) p.bigramAssigned[c] = v;
+        else p.assigned[c] = v;
         p.pool.splice(tIdx, 1);
       }
       i++;
