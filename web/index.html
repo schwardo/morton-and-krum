@@ -93,7 +93,7 @@
   /* Station card overlays on the rotated board's dotted boxes. */
   .station-card {
     position: absolute;
-    background: rgba(243, 233, 210, 0.92);
+    background: rgb(243, 233, 210);
     border: 1px solid #6a5530;
     border-radius: 3px;
     padding: 4px 6px;
@@ -125,15 +125,15 @@
     min-width: 30px;
     display: inline-block;
   }
-  .station-card.current { box-shadow: 0 0 0 2px #ffd23d, 0 2px 4px rgba(0,0,0,.4); background: rgba(255, 247, 194, 0.95); }
+  .station-card.current { box-shadow: 0 0 0 2px #ffd23d, 0 2px 4px rgba(0,0,0,.4); background: rgb(255, 247, 194); }
   .station-card.done { opacity: .7; }
-  /* Approximate positions of each numbered station box on the rotated board */
-  #stn1 { top: 13%; left:  2%; width: 14%; height: 50%; }
-  #stn2 { top: 51%; left: 17%; width: 12%; height: 47%; }
-  #stn3 { top: 51%; left: 31%; width: 12%; height: 47%; }
-  #stn4 { top: 51%; left: 45%; width: 16%; height: 47%; }
-  #stn5 { top: 47%; left: 67%; width: 16%; height: 51%; }
-  #stn6 { top: 13%; left: 84%; width: 14%; height: 50%; }
+  /* Positions of each numbered station box on the board, measured from the dotted-line edges */
+  #stn1 { top:  4.1%; left:  1.5%; width: 15.3%; height: 42.9%; }
+  #stn2 { top: 53.9%; left:  9.3%; width: 15.3%; height: 42.3%; }
+  #stn3 { top: 53.9%; left: 30.1%; width: 15.2%; height: 42.3%; }
+  #stn4 { top: 53.9%; left: 53.8%; width: 15.4%; height: 42.3%; }
+  #stn5 { top: 53.9%; left: 74.5%; width: 15.5%; height: 42.3%; }
+  #stn6 { top:  4.1%; left: 82.5%; width: 15.3%; height: 42.9%; }
   @media (max-width: 600px) {
     .station-card { font-size: 8px; padding: 2px 3px; }
     .station-card .word { font-size: 9px; }
