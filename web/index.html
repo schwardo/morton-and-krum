@@ -847,8 +847,19 @@
   // assigned to it (alongside letters during typing-phase assignment); each time
   // it's used in a typed word, the player scores assigned + BIGRAM_BONUS instead
   // of typing the two underlying letters individually.
-  const BIGRAMS = ["EE","OO","OU","EA","ST","GH","CK","CH"];
+  const BIGRAMS = ["ER","AR","OU","EA","ST","GH","CK","CH"];
   const BIGRAM_BONUS = 5;
+  // REPEAT: a special token claimed alongside the bigrams from the same shared
+  // pool. It fires whenever the next letter matches the previous letter typed
+  // in the same word, scoring assigned + REPEAT_BONUS. A claimed bigram always
+  // wins the greedy match over REPEAT, so claiming both (e.g. EE and REPEAT) is
+  // fine — the bigram fires on EE and REPEAT picks up any *other* doubled letter.
+  // REPEAT_BONUS is intentionally smaller than BIGRAM_BONUS because REPEAT only
+  // replaces ONE letter per fire (vs. two for a bigram) and fires ~2× more often
+  // than the strongest bigram (≈0.19/word vs. 0.08/word for ST). With BONUS=2,
+  // REPEAT's expected value is comparable to the best individual bigram.
+  const REPEAT_TOKEN = "REPEAT";
+  const REPEAT_BONUS = 2;
   // Token-value bounds (define which trades are legal). Cannot split below TOKEN_MIN
   // (would need a -3 type) or merge above TOKEN_MAX (would need a +6 type).
   const TOKEN_MIN = -2;
@@ -885,6 +896,21 @@
     }
     return out;
   })();
+  // Average count of doubled-letter events per word (positions where w[i] === w[i-1]).
+  // Used by the AI to estimate how often a claimed REPEAT will fire over the rest
+  // of the game. Doesn't account for bigrams stealing some doubled-letter fires —
+  // an over-estimate by design, since the EV threshold to claim is conservative.
+  const REPEAT_FREQ = (() => {
+    let total = 0, n = 0;
+    for (const cat of Object.keys(PROMPTS)) {
+      for (const w of PROMPTS[cat]) {
+        let c = 0;
+        for (let i = 1; i < w.length; i++) if (w[i] === w[i-1]) c++;
+        total += c; n++;
+      }
+    }
+    return n ? total / n : 0;
+  })();
 
   // Train positions along the central track stretch on the rotated board.
   // Index 0 = before round 1; indices 1..6 = positions reached after rounds 1..6.
@@ -914,7 +940,7 @@
       // lane: 0 = front (current leader), 1 = back. P1 starts in front by default.
       laneOrder: [0, 1],                  // laneOrder[lane] = playerIdx; index 0 is front
       history: [],                        // per-round summaries
-      bigramPool: [...BIGRAMS],           // shared pool, depleted as players claim
+      bigramPool: [...BIGRAMS, REPEAT_TOKEN],  // shared pool, depleted as players claim
       pickPass: 1,                        // 1 = bigrams allowed; 2 = words only
       passOneActed: [false, false],       // each player's pass-1 action committed?
       wordPickedBy: [false, false],       // has player N picked a word this round?
@@ -1139,11 +1165,12 @@
     const bigramSection = allowBigram && game.bigramPool.length > 0 ? `
       <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--brass-dark)">
         <div style="font-size:11px;letter-spacing:2px;color:var(--brass);margin-bottom:4px">
-          — OR CLAIM A BIGRAM TOKEN —
+          — OR CLAIM A TOKEN —
         </div>
-        <div class="wordOptions">${game.bigramPool.map(bg =>
-          `<button class="wordChoice bigramChoice" data-act="bigram" data-bg="${bg}">${bg}</button>`
-        ).join("")}</div>
+        <div class="wordOptions">${game.bigramPool.map(bg => {
+          const lbl = bg === REPEAT_TOKEN ? "↻ REPEAT" : bg;
+          return `<button class="wordChoice bigramChoice" data-act="bigram" data-bg="${bg}">${lbl}</button>`;
+        }).join("")}</div>
       </div>` : "";
     const customSection = `
       <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--brass-dark)">
@@ -1162,7 +1189,7 @@
         </div>
       </div>`;
     showModal({
-      title: allowBigram ? "PICK WORD OR CLAIM BIGRAM" : "PICK A WORD",
+      title: allowBigram ? "PICK WORD OR CLAIM TOKEN" : "PICK A WORD",
       whoClass: playerIdx === 0 ? "p1" : "p2",
       whoText: `Player ${playerIdx + 1}`,
       body: slotSections + bigramSection + customSection,
@@ -1275,24 +1302,38 @@
     const words = game.card.picks.filter(Boolean);
     const seq = [];
     const valOf = (c) => (c in p.assigned) ? p.assigned[c] : EMPTY_POOL_PENALTY;
-    // Greedy left-to-right: at each position, if a claimed-and-assigned bigram
-    // matches the next two chars, fire the bigram (skipping both letters) and
-    // score (assigned + BIGRAM_BONUS). Otherwise type the single letter.
+    // Greedy left-to-right: at each position, first try a claimed-and-assigned
+    // bigram (skip both letters, score assigned + BIGRAM_BONUS). Otherwise, if
+    // REPEAT is claimed-and-assigned and this letter matches the previous letter
+    // typed in this word, fire REPEAT. Otherwise type the single letter.
+    // lastLetter resets at each word boundary (RETURN is not a letter).
     const matchBigram = (w, i) => {
       if (i > w.length - 2) return null;
       const next2 = w.slice(i, i + 2);
       if (p.claimedBigrams.includes(next2) && (next2 in p.bigramAssigned)) return next2;
       return null;
     };
+    const hasRepeat = p.claimedBigrams.includes(REPEAT_TOKEN) && (REPEAT_TOKEN in p.bigramAssigned);
     for (const w of words) {
-      let i = 0;
+      let i = 0, lastLetter = null;
       while (i < w.length) {
         const bg = matchBigram(w, i);
         if (bg) {
           seq.push({ char: bg, val: p.bigramAssigned[bg] + BIGRAM_BONUS, kind: "bigram" });
+          lastLetter = bg[1];
           i += 2;
+        } else if (hasRepeat && lastLetter != null && w[i] === lastLetter) {
+          seq.push({
+            char: REPEAT_TOKEN,
+            val: p.bigramAssigned[REPEAT_TOKEN] + REPEAT_BONUS,
+            kind: "repeat",
+            repeatChar: w[i],
+          });
+          lastLetter = w[i];
+          i++;
         } else {
           seq.push({ char: w[i], val: valOf(w[i]) });
+          lastLetter = w[i];
           i++;
         }
       }
@@ -1321,7 +1362,7 @@
       const ev = a.seq[a.pos];
       a.runningTotal += ev.val;
       flashKey(a.playerIdx, ev.char, ev.val);
-      appendTape(a.playerIdx, ev.char);
+      appendTape(a.playerIdx, ev.char, ev.repeatChar);
       document.getElementById(`p${a.playerIdx + 1}Score`).textContent =
         game.players[a.playerIdx].score + a.runningTotal;
       a.pos++;
@@ -1356,13 +1397,14 @@
   }
 
   function flashKey(playerIdx, char, val) {
-    // 2-char strings are bigrams → flash the bigram tile instead of a key.
-    const isBigram = char.length === 2;
+    // Single-char events flash a keyboard key; multi-char events (bigrams +
+    // REPEAT) flash the corresponding tile in the bigrams strip.
+    const isLetter = char.length === 1;
     const wrap = document.getElementById(`player${playerIdx + 1}`);
     if (!wrap) return;
-    const node = isBigram
-      ? document.querySelector(`#p${playerIdx + 1}Bigrams .bigram-tile[data-bg="${char}"]`)
-      : document.querySelector(`#p${playerIdx + 1}Keyboard .key[data-letter="${char === RETURN ? "_" : char}"]`);
+    const node = isLetter
+      ? document.querySelector(`#p${playerIdx + 1}Keyboard .key[data-letter="${char === RETURN ? "_" : char}"]`)
+      : document.querySelector(`#p${playerIdx + 1}Bigrams .bigram-tile[data-bg="${char}"]`);
     if (!node) return;
     node.classList.remove("typing"); void node.offsetWidth; node.classList.add("typing");
     const rect = node.getBoundingClientRect();
@@ -1376,14 +1418,17 @@
     setTimeout(() => pop.remove(), 1100);
   }
 
-  function appendTape(playerIdx, char) {
+  function appendTape(playerIdx, char, displayChar) {
     const tape = document.getElementById(`p${playerIdx + 1}Tape`);
     if (!tape) return;
     // Mark previously-fresh chars as no longer fresh.
     tape.querySelectorAll(".typed-c.fresh").forEach(n => n.classList.remove("fresh"));
     const span = document.createElement("span");
-    span.className = "typed-c fresh" + (char === RETURN ? " ret" : "");
-    span.textContent = char === RETURN ? "↵ " : char;
+    const isRet = char === RETURN;
+    span.className = "typed-c fresh" + (isRet ? " ret" : "");
+    // For REPEAT events the caller passes the actual letter being repeated as
+    // displayChar so the tape reads naturally (e.g. BEE prints B, E, E).
+    span.textContent = isRet ? "↵ " : (displayChar || char);
     tape.appendChild(span);
   }
 
@@ -1575,12 +1620,17 @@
     el.innerHTML = p.claimedBigrams.map(bg => {
       const assigned = bg in p.bigramAssigned;
       const v = p.bigramAssigned[bg];
-      const valLabel = assigned ? `${signed(v)}+${BIGRAM_BONUS}` : "·";
+      const isRepeat = bg === REPEAT_TOKEN;
+      const bonus = isRepeat ? REPEAT_BONUS : BIGRAM_BONUS;
+      const valLabel = assigned ? `${signed(v)}+${bonus}` : "·";
+      const label = isRepeat ? "↻" : bg;
+      const tip = isRepeat ? "REPEAT — fires when a letter matches the previous letter typed" : bg;
       let cls = "bigram-tile";
+      if (isRepeat) cls += " repeat";
       if (!assigned && need.has(bg)) cls += " required";
       if (isActive && !assigned) cls += " click";
-      return `<div class="${cls}" data-bg="${bg}" data-pidx="${idx}">
-                <div class="bg">${bg}</div>
+      return `<div class="${cls}" data-bg="${bg}" data-pidx="${idx}" title="${tip}">
+                <div class="bg"${isRepeat ? ' style="font-size:22px"' : ""}>${label}</div>
                 <div class="val">${valLabel}</div>
               </div>`;
     }).join("");
@@ -1698,8 +1748,10 @@
 
   function placeSelectedOn(idx, target) {
     const p = game.players[idx];
-    const isBigram = target.length === 2;
-    const map = isBigram ? p.bigramAssigned : p.assigned;
+    // Single-char targets are letters/RETURN; multi-char targets are bigram
+    // tokens or REPEAT, both stored on bigramAssigned.
+    const isLetter = target.length === 1;
+    const map = isLetter ? p.assigned : p.bigramAssigned;
     if (target in map) {
       setMessage(`${target} already valued at ${signed(map[target])}.`);
       return;
@@ -1862,28 +1914,41 @@
   }
 
   function scoreWordForPlayer(word, p) {
-    // Unassigned letters: if there are still tokens, estimate at pool avg; if the
-    // pool is empty, those letters will hard-score at EMPTY_POOL_PENALTY when typed.
-    // Greedy left-to-right bigram substitution mirrors buildTypingSeq: for each
-    // claimed bigram with an assigned (or pending) value, replace its 2-letter run
-    // with (val + BIGRAM_BONUS).
+    // Mirrors buildTypingSeq: bigram > REPEAT > single letter. Unassigned
+    // letters fall back to pool avg (still tokens to spend) or EMPTY_POOL_PENALTY
+    // (pool exhausted). Pending bigram/REPEAT claims assume the avg token will
+    // land there, plus BIGRAM_BONUS.
     const fallback = p.pool.length
       ? p.pool.reduce((a, b) => a + b.val, 0) / p.pool.length
       : EMPTY_POOL_PENALTY;
     const valOf = (c) => (c in p.assigned) ? p.assigned[c] : fallback;
     const bgValOf = (bg) => (bg in p.bigramAssigned)
       ? p.bigramAssigned[bg] + BIGRAM_BONUS
-      : fallback + BIGRAM_BONUS;  // pending claim — assume avg token will land here
-    let s = 0;
-    let i = 0;
+      : fallback + BIGRAM_BONUS;
+    const hasRepeat = p.claimedBigrams.includes(REPEAT_TOKEN);
+    const repeatVal = () => (REPEAT_TOKEN in p.bigramAssigned)
+      ? p.bigramAssigned[REPEAT_TOKEN] + REPEAT_BONUS
+      : fallback + REPEAT_BONUS;
+    let s = 0, i = 0, lastLetter = null;
     while (i < word.length) {
       let matchedBg = null;
       if (i <= word.length - 2) {
         const next2 = word.slice(i, i + 2);
         if (p.claimedBigrams.includes(next2)) matchedBg = next2;
       }
-      if (matchedBg) { s += bgValOf(matchedBg); i += 2; }
-      else { s += valOf(word[i]); i++; }
+      if (matchedBg) {
+        s += bgValOf(matchedBg);
+        lastLetter = matchedBg[1];
+        i += 2;
+      } else if (hasRepeat && lastLetter != null && word[i] === lastLetter) {
+        s += repeatVal();
+        lastLetter = word[i];
+        i++;
+      } else {
+        s += valOf(word[i]);
+        lastLetter = word[i];
+        i++;
+      }
     }
     s += (RETURN in p.assigned) ? p.assigned[RETURN] : fallback;
     return s;
@@ -1977,9 +2042,19 @@
     const assumedBigramTokenVal = 0;  // AI plans to spend a +0 (or worst free) token
     let bestBg = null;
     for (const bg of game.bigramPool) {
-      const expectedUses = (BIGRAM_FREQ[bg] || 0) * 2 * stationsAhead;
-      const letterCost = letterVal(bg[0]) + letterVal(bg[1]);
-      const perUseGain = (assumedBigramTokenVal + BIGRAM_BONUS) - letterCost;
+      let expectedUses, letterCost, bonus;
+      if (bg === REPEAT_TOKEN) {
+        // REPEAT replaces a single letter per fire (vs. two for a real bigram),
+        // so its alternative cost is one avg-pool letter and it scores REPEAT_BONUS.
+        expectedUses = REPEAT_FREQ * 2 * stationsAhead;
+        letterCost = avgPoolVal;
+        bonus = REPEAT_BONUS;
+      } else {
+        expectedUses = (BIGRAM_FREQ[bg] || 0) * 2 * stationsAhead;
+        letterCost = letterVal(bg[0]) + letterVal(bg[1]);
+        bonus = BIGRAM_BONUS;
+      }
+      const perUseGain = (assumedBigramTokenVal + bonus) - letterCost;
       const ev = expectedUses * perUseGain;
       if (bestBg == null || ev > bestBg.ev) bestBg = { bg, ev };
     }
@@ -2036,9 +2111,13 @@
     // bigram beats placing the same +0 token on a single letter. Rank them well
     // below (more negative than) any letter rank.
     const targetRank = (c, freqInRound) => {
+      if (c === REPEAT_TOKEN) {
+        const expectedUses = REPEAT_FREQ * 2 * (NUM_STATIONS - game.station + 1);
+        return -10 - expectedUses * REPEAT_BONUS;
+      }
       if (c.length === 2) {
         const expectedUses = (BIGRAM_FREQ[c] || 0) * 2 * (NUM_STATIONS - game.station + 1);
-        return -10 - expectedUses * 5;
+        return -10 - expectedUses * BIGRAM_BONUS;
       }
       return letterRank(c, freqInRound);
     };
@@ -2047,7 +2126,7 @@
     // away from opp-strong letters and a jitter that grows with boldness.
     const decoratedNeed = need.map(c => ({
       c,
-      k: targetRank(c, freq[c]) + (c.length === 2 ? 0 : oppPenalty(c))
+      k: targetRank(c, freq[c]) + (c.length === 1 ? oppPenalty(c) : 0)
          + (Math.random() - 0.5) * (1 + 4 * boldness)
     }));
     decoratedNeed.sort((a, b) => a.k - b.k);
@@ -2074,8 +2153,8 @@
       const tIdx = p.pool.findIndex(t => t.id === tok.id);
       if (tIdx >= 0) {
         const v = p.pool[tIdx].val;
-        if (c.length === 2) p.bigramAssigned[c] = v;
-        else p.assigned[c] = v;
+        if (c.length === 1) p.assigned[c] = v;
+        else p.bigramAssigned[c] = v;
         p.pool.splice(tIdx, 1);
       }
       i++;
