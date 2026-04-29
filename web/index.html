@@ -452,7 +452,7 @@
     width: 100px;
     border-radius: 4px;
   }
-  .wordOptions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 12px 0; }
+  .wordOptions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 12px 0; max-height: 260px; overflow-y: auto; padding: 4px; }
   .wordChoice {
     background: var(--paper); color: var(--ink);
     border: 1px solid #b39a6a;
@@ -594,22 +594,115 @@
 <script>
 (() => {
   // ---------- Data ----------
+  // Expanded word pools (~50 each) with mixed lengths and letter-pattern diversity
+  // (short/long, repeated letters, rare-letter words) so the AI has more strategic
+  // options and CPU-vs-CPU diverges on more axes than just the greedy top word.
   const PROMPTS = {
-    color:        ["RED","BLUE","GREEN","YELLOW","ORANGE","PURPLE","BLACK","BROWN","SILVER","GOLDEN"],
-    zoo_animal:   ["ELEPHANT","LION","TIGER","MONKEY","ZEBRA","BEAR","GIRAFFE","PANDA","OSTRICH","RHINO"],
-    weather:      ["SUNNY","RAINY","FOGGY","SNOWY","WINDY","STORMY","CLOUDY","MUGGY","BREEZY","HUMID"],
-    food:         ["BREAD","CHEESE","BACON","COFFEE","STEAK","BISCUIT","GRAVY","PEACH","OATMEAL","PUDDING"],
-    emotion:      ["HAPPY","ANGRY","BORED","NERVOUS","EXCITED","CALM","JOLLY","GLOOMY","WEARY","PROUD"],
-    time:         ["MORNING","EVENING","MIDNIGHT","NOON","SUNSET","SUNRISE","DAWN","DUSK","TWILIGHT","TUESDAY"],
-    relative:     ["MOTHER","FATHER","BROTHER","SISTER","COUSIN","UNCLE","GRANDMA","NEPHEW","NIECE","AUNTIE"],
-    city:         ["CHICAGO","ALTON","STLOUIS","BLOOMINGTON","JOLIET","MENDOTA","SPRINGFIELD","PEORIA"],
-    vehicle:      ["TRAIN","HORSE","WAGON","CARRIAGE","BICYCLE","STEAMER","FERRY","SLEIGH","BUGGY","CARTAGE"],
-    adjective:    ["FAST","SLOW","HEAVY","BRIGHT","GLOOMY","BROKEN","ANCIENT","MIGHTY","CROOKED","GENTLE"],
-    profession:   ["ENGINEER","CONDUCTOR","PORTER","SOLDIER","MERCHANT","FARMER","DOCTOR","SHERIFF","BAKER","MINER"],
-    direction:    ["NORTH","SOUTH","EAST","WEST","FORWARD","BACKWARD","UPHILL","DOWNHILL"],
-    animal:       ["HORSE","COW","DOG","CAT","SHEEP","GOAT","CHICKEN","RABBIT","DUCK","GOOSE"],
-    body_part:    ["HEAD","HAND","ELBOW","KNEE","SHOULDER","FINGER","THUMB","STOMACH","ANKLE","ARM"],
-    object:       ["LANTERN","KETTLE","HAMMER","CANDLE","BUCKET","SHOVEL","WHISTLE","BOOTS","PIPE","TICKET"],
+    color: [
+      "RED","BLUE","GREEN","YELLOW","ORANGE","PURPLE","BLACK","BROWN","SILVER","GOLDEN",
+      "PINK","GRAY","WHITE","IVORY","AMBER","CORAL","CRIMSON","SCARLET","MAGENTA","VIOLET",
+      "INDIGO","TEAL","AQUA","NAVY","MAROON","BEIGE","TAN","OLIVE","LIME","JADE",
+      "EMERALD","RUBY","ROSE","PLUM","COPPER","BRONZE","BURGUNDY","CYAN","AZURE","BUFF",
+      "SAGE","LAVENDER","MAUVE","FUCHSIA","TURQUOISE","SAFFRON","MUSTARD","CHARCOAL","BLUSH","CARAMEL"
+    ],
+    zoo_animal: [
+      "ELEPHANT","LION","TIGER","MONKEY","ZEBRA","BEAR","GIRAFFE","PANDA","OSTRICH","RHINO",
+      "HIPPO","GORILLA","KANGAROO","KOALA","CHEETAH","LEOPARD","JAGUAR","PANTHER","PEACOCK","FLAMINGO",
+      "ALLIGATOR","CROCODILE","MEERKAT","LEMUR","OTTER","SLOTH","ARMADILLO","PORCUPINE","RACCOON","BISON",
+      "ANTELOPE","GAZELLE","MOOSE","WALRUS","SEAL","DOLPHIN","OCTOPUS","TURTLE","IGUANA","CHAMELEON",
+      "TARANTULA","FERRET","PYTHON","MONGOOSE","WOMBAT","BABOON","ORANGUTAN","JACKAL","HYENA","BUFFALO"
+    ],
+    weather: [
+      "SUNNY","RAINY","FOGGY","SNOWY","WINDY","STORMY","CLOUDY","MUGGY","BREEZY","HUMID",
+      "HOT","COLD","COOL","WARM","MILD","FREEZING","BLISTERING","ICY","FROSTY","BLUSTERY",
+      "HAZY","MISTY","SLEET","HAIL","THUNDER","LIGHTNING","GUSTY","SCORCHING","BALMY","CHILLY",
+      "DRIZZLE","OVERCAST","BLIZZARD","DROUGHT","ARID","SULTRY","BRIGHT","BRISK","STIFLING","CLEAR",
+      "BRACING","NIPPY","TROPICAL","RADIANT","BLEAK","DAMP","DRY","WET","HARSH","TEMPERATE"
+    ],
+    food: [
+      "BREAD","CHEESE","BACON","COFFEE","STEAK","BISCUIT","GRAVY","PEACH","OATMEAL","PUDDING",
+      "PIE","CAKE","JAM","BUTTER","EGGS","HAM","BEEF","PORK","FISH","SOUP",
+      "STEW","SALAD","BEANS","RICE","NOODLE","PASTA","PIZZA","SAUSAGE","MEATLOAF","PANCAKE",
+      "WAFFLE","CORNBREAD","CRACKER","MUFFIN","COOKIE","DOUGHNUT","JELLY","HONEY","MOLASSES","OATS",
+      "TURKEY","CHICKEN","OYSTER","LOBSTER","SHRIMP","OLIVE","PICKLE","PEPPER","ONION","GARLIC"
+    ],
+    emotion: [
+      "HAPPY","ANGRY","BORED","NERVOUS","EXCITED","CALM","JOLLY","GLOOMY","WEARY","PROUD",
+      "SAD","MAD","MERRY","GIDDY","TIRED","SLEEPY","CHEERFUL","WORRIED","ANXIOUS","AFRAID",
+      "STARTLED","SURPRISED","CONFUSED","FRUSTRATED","IRRITATED","GRUMPY","CRANKY","LONELY","JEALOUS","ENVIOUS",
+      "AMUSED","DELIGHTED","OVERJOYED","CONTENT","RELAXED","ECSTATIC","FURIOUS","ENRAGED","MISERABLE","SORROWFUL",
+      "HOPEFUL","OPTIMISTIC","GRATEFUL","THANKFUL","BLISSFUL","AWESTRUCK","UNEASY","RESTLESS","CURIOUS","SHY"
+    ],
+    time: [
+      "MORNING","EVENING","MIDNIGHT","NOON","SUNSET","SUNRISE","DAWN","DUSK","TWILIGHT","TUESDAY",
+      "MONDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY","BREAKFAST","LUNCHTIME","DINNER","BEDTIME",
+      "DAYTIME","NIGHTTIME","MIDDAY","MIDWEEK","WEEKEND","AFTERNOON","JANUARY","FEBRUARY","MARCH","APRIL",
+      "JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER","SPRING","SUMMER",
+      "AUTUMN","WINTER","HARVEST","EQUINOX","SOLSTICE","EARLY","LATE","NIGHT","FORTNIGHT","DECADE","CENTURY"
+    ],
+    relative: [
+      "MOTHER","FATHER","BROTHER","SISTER","COUSIN","UNCLE","GRANDMA","NEPHEW","NIECE","AUNTIE",
+      "GRANDPA","GRANDFATHER","GRANDMOTHER","STEPMOTHER","STEPFATHER","STEPSON","STEPDAUGHTER","STEPSISTER","STEPBROTHER","SON",
+      "DAUGHTER","TWIN","SIBLING","HUSBAND","WIFE","SPOUSE","PARENT","CHILD","INLAW","FAMILY",
+      "GODFATHER","GODMOTHER","GODSON","GODDAUGHTER","ELDER","KIN","ANCESTOR","FORBEAR","DESCENDANT","RELATIVE",
+      "MAMA","PAPA","NANA","POPS","BUDDY","BABE","DARLING","SWEETHEART","COMRADE","FRIEND"
+    ],
+    city: [
+      "CHICAGO","ALTON","STLOUIS","BLOOMINGTON","JOLIET","MENDOTA","SPRINGFIELD","PEORIA",
+      "DECATUR","ROCKFORD","NAPERVILLE","AURORA","ELGIN","WAUKEGAN","CICERO","EVANSTON","SCHAUMBURG","CHAMPAIGN","PALATINE","SKOKIE",
+      "ATLANTA","BOSTON","DALLAS","HOUSTON","PHOENIX","SEATTLE","DENVER","MIAMI","NASHVILLE","PORTLAND",
+      "BALTIMORE","DETROIT","MILWAUKEE","MEMPHIS","INDIANAPOLIS","COLUMBUS","CHARLOTTE","RALEIGH","BUFFALO","CLEVELAND",
+      "OMAHA","TULSA","WICHITA","ALBUQUERQUE","SACRAMENTO","TUCSON","KANSASCITY","NEWORLEANS","SAINTPAUL","JACKSONVILLE"
+    ],
+    vehicle: [
+      "TRAIN","HORSE","WAGON","CARRIAGE","BICYCLE","STEAMER","FERRY","SLEIGH","BUGGY","CARTAGE",
+      "STAGECOACH","CHARIOT","TROLLEY","CABLECAR","SCHOONER","CLIPPER","BARGE","CANOE","KAYAK","RAFT",
+      "AIRSHIP","BALLOON","ZEPPELIN","GLIDER","BIPLANE","DIRIGIBLE","SUBMARINE","TUGBOAT","STEAMBOAT","RIVERBOAT",
+      "VELOCIPEDE","UNICYCLE","TANDEM","CART","SLED","TOBOGGAN","WHEELBARROW","RICKSHAW","HANSOM","LANDAU",
+      "PHAETON","SURREY","BAROUCHE","CABRIOLET","BUCKBOARD","DOGCART","JINRIKISHA","HANDCAR","DRAISINE","HANDCART"
+    ],
+    adjective: [
+      "FAST","SLOW","HEAVY","BRIGHT","GLOOMY","BROKEN","ANCIENT","MIGHTY","CROOKED","GENTLE",
+      "BIG","SMALL","TINY","HUGE","TALL","SHORT","WIDE","NARROW","DEEP","SHALLOW",
+      "LOUD","QUIET","SOFT","HARD","SHARP","DULL","SHINY","DUSTY","RUSTY","POLISHED",
+      "TWISTED","STRAIGHT","CURVED","ROUND","SQUARE","HOLLOW","SOLID","STURDY","FRAGILE","FLEXIBLE",
+      "NIMBLE","CLUMSY","GRACEFUL","ELEGANT","SHABBY","NOBLE","HUMBLE","DARING","RECKLESS","CAUTIOUS"
+    ],
+    profession: [
+      "ENGINEER","CONDUCTOR","PORTER","SOLDIER","MERCHANT","FARMER","DOCTOR","SHERIFF","BAKER","MINER",
+      "BLACKSMITH","CARPENTER","COOPER","TAILOR","COBBLER","BUTCHER","BREWER","DRUGGIST","BARBER","TANNER",
+      "MASON","PAINTER","SCULPTOR","WEAVER","SPINNER","POTTER","MILLER","FISHERMAN","HUNTER","TRAPPER",
+      "SAILOR","CAPTAIN","NAVIGATOR","TELEGRAPHER","OPERATOR","CLERK","BANKER","LAWYER","JUDGE","MAYOR",
+      "TEACHER","SCHOLAR","PREACHER","SURVEYOR","CARTOGRAPHER","DETECTIVE","CONSTABLE","INNKEEPER","STATIONMASTER","DISPATCHER"
+    ],
+    direction: [
+      "NORTH","SOUTH","EAST","WEST","FORWARD","BACKWARD","UPHILL","DOWNHILL",
+      "NORTHEAST","NORTHWEST","SOUTHEAST","SOUTHWEST","UP","DOWN","LEFT","RIGHT","INWARD","OUTWARD","ABOVE","BELOW",
+      "AHEAD","BEHIND","BESIDE","ACROSS","BEYOND","NEARBY","DISTANT","UPSTREAM","DOWNSTREAM","UPRIVER",
+      "DOWNRIVER","UPSTAIRS","DOWNSTAIRS","SIDEWAYS","DIAGONAL","CROSSWISE","STRAIGHT","CIRCULAR","CLOCKWISE","COUNTERCLOCKWISE",
+      "INBOUND","OUTBOUND","WESTWARD","EASTWARD","NORTHWARD","SOUTHWARD","HOMEWARD","SEAWARD","LANDWARD","HEAVENWARD"
+    ],
+    animal: [
+      "HORSE","COW","DOG","CAT","SHEEP","GOAT","CHICKEN","RABBIT","DUCK","GOOSE",
+      "PIG","HOG","SOW","BULL","CALF","LAMB","KID","FOAL","COLT","MARE",
+      "STALLION","MULE","DONKEY","OX","ROOSTER","HEN","CHICK","DRAKE","GANDER","GOSLING",
+      "KITTEN","PUPPY","HOUND","BEAGLE","COLLIE","TERRIER","MUTT","PARROT","CANARY","FINCH",
+      "PIGEON","DOVE","SPARROW","CROW","RAVEN","MAGPIE","HAMSTER","GERBIL","GUINEAPIG","TURKEY"
+    ],
+    body_part: [
+      "HEAD","HAND","ELBOW","KNEE","SHOULDER","FINGER","THUMB","STOMACH","ANKLE","ARM",
+      "LEG","FOOT","TOE","NOSE","EAR","EYE","MOUTH","LIP","TONGUE","TOOTH",
+      "CHIN","CHEEK","FOREHEAD","NECK","CHEST","BACK","WAIST","HIP","WRIST","PALM",
+      "HEEL","SOLE","KNUCKLE","SHIN","CALF","THIGH","JAW","BROW","LASH","NAIL",
+      "SCALP","TEMPLE","JOINT","SPINE","RIB","LIVER","LUNG","HEART","KIDNEY","BRAIN"
+    ],
+    object: [
+      "LANTERN","KETTLE","HAMMER","CANDLE","BUCKET","SHOVEL","WHISTLE","BOOTS","PIPE","TICKET",
+      "BOOK","CUP","KEY","LOCK","ROPE","CHAIN","NAIL","SCREW","SAW","DRILL",
+      "WRENCH","PLIERS","CHISEL","AXE","HATCHET","SCYTHE","SICKLE","PITCHFORK","RAKE","HOE",
+      "BROOM","MOP","BASIN","TUB","BARREL","CRATE","BOX","CHEST","TRUNK","SACK",
+      "POUCH","WALLET","COMPASS","SEXTANT","TELESCOPE","BINOCULARS","MAP","CHART","JOURNAL","ALMANAC"
+    ],
   };
   const PROMPT_LABELS = {
     color: "color", zoo_animal: "zoo animal", weather: "weather",
@@ -1350,48 +1443,55 @@
     return s;
   }
 
+  // Net advantage of typing a word: my score minus a weighted version of opponent's
+  // score. Both players type both words, so picking a word with letters my opponent
+  // valued cheaply is doubly good — I gain, they lose.
+  const OPP_WEIGHT = 0.7;
+  function netScore(word, p, opp) {
+    return scoreWordForPlayer(word, p) - OPP_WEIGHT * scoreWordForPlayer(word, opp);
+  }
+
   function aiBid(playerIdx) {
     const p = game.players[playerIdx];
     const opp = game.players[1 - playerIdx];
     const remaining = NUM_STATIONS - game.station + 1;  // includes current
     if (remaining <= 0) return 0;
-    // Estimate value of winning this round: spread between best word in slot A vs slot B.
+    // Value of winning this round = spread between net-best word in slot A vs slot B.
     const tpl = game.card.template;
-    const bestInSlot = (catKey) => {
+    const bestNetIn = (catKey) => {
       let best = -Infinity;
-      for (const w of PROMPTS[catKey]) best = Math.max(best, scoreWordForPlayer(w, p));
+      for (const w of PROMPTS[catKey]) best = Math.max(best, netScore(w, p, opp));
       return best;
     };
-    const sa = bestInSlot(tpl.a), sb = bestInSlot(tpl.b);
-    const valueOfControl = Math.max(2, Math.abs(sa - sb) + 4);   // larger spread → bid more
-    // Don't outspend if we won't get value; bid roughly fair-share + value tuning.
+    const sa = bestNetIn(tpl.a), sb = bestNetIn(tpl.b);
+    const valueOfControl = Math.max(2, Math.abs(sa - sb) + 4);
     const fairShare = p.coal / remaining;
     const target = Math.min(fairShare + valueOfControl - 2, p.coal);
-    // Slight randomness so AI vs AI isn't deterministic.
     const jitter = (Math.random() - 0.4) * 3;
     let bid = Math.round(target + jitter);
-    // Don't bid more than the opponent could possibly afford; floor at 0.
     bid = Math.max(0, Math.min(bid, p.coal, opp.coal + 2));
     return bid;
   }
 
   function aiPickSlot(playerIdx) {
     const p = game.players[playerIdx];
+    const opp = game.players[1 - playerIdx];
     const tpl = game.card.template;
-    const bestIn = (catKey) => {
+    const bestNetIn = (catKey) => {
       let best = -Infinity;
-      for (const w of PROMPTS[catKey]) best = Math.max(best, scoreWordForPlayer(w, p));
+      for (const w of PROMPTS[catKey]) best = Math.max(best, netScore(w, p, opp));
       return best;
     };
-    return bestIn(tpl.a) >= bestIn(tpl.b) ? 0 : 1;
+    return bestNetIn(tpl.a) >= bestNetIn(tpl.b) ? 0 : 1;
   }
 
   function aiPickWord(playerIdx, slot) {
     const p = game.players[playerIdx];
+    const opp = game.players[1 - playerIdx];
     const cat = slot === 0 ? game.card.template.a : game.card.template.b;
-    // Score every choice, then pick randomly among those within 0.5 pts of the best
-    // so two AI players running the same greedy logic don't always converge.
-    const scored = PROMPTS[cat].map(w => ({ w, s: scoreWordForPlayer(w, p) }));
+    // Maximize my net advantage: high in my keyboard, low in theirs.
+    // Tiebreak randomly among picks within 0.5 pts of best.
+    const scored = PROMPTS[cat].map(w => ({ w, s: netScore(w, p, opp) }));
     const bestScore = Math.max(...scored.map(x => x.s));
     const top = scored.filter(x => x.s >= bestScore - 0.5);
     return top[Math.floor(Math.random() * top.length)].w;
@@ -1417,20 +1517,45 @@
 
   function aiAssignFlow(playerIdx, onDone) {
     const p = game.players[playerIdx];
+    const opp = game.players[1 - playerIdx];
     const need = [...neededLetters(playerIdx)];
     if (need.length === 0) { onDone(); return; }
     const freq = {};
     for (const w of game.card.picks.filter(Boolean)) {
       for (const c of w) freq[c] = (freq[c] || 0) + 1;
     }
-    // Sort needed letters by descending priority; random tiebreak so two AI players
-    // with identical state don't pick the same order.
-    const decoratedNeed = need.map(c => ({ c, k: letterRank(c, freq[c]) + (Math.random() - 0.5) * 0.5 }));
+    // Boldness: ramp from ~1.0 in early rounds down to ~0 in the final round.
+    // Stations remaining AFTER this one (5..0). High = take more risk to differentiate
+    // from opponent and "place big bets" we can leverage in later rounds.
+    const stationsLeft = NUM_STATIONS - game.station;
+    const boldness = stationsLeft / NUM_STATIONS;  // ~0.83 round 1, 0 round 6
+
+    // Differentiate from opponent: where opp has already locked a high value on letter
+    // L, putting our high token there is wasted — we'll only "match" them. Bias against
+    // those letters so we specialize on letters they don't dominate.
+    const oppPenalty = (c) => {
+      const v = opp.assigned[c];
+      if (v == null) return 0;
+      return Math.max(0, v) * 0.6;  // only penalize where opp is positive
+    };
+
+    // Sort needed letters by ascending rank (lower rank = higher priority), with bias
+    // away from opp-strong letters and a jitter that grows with boldness.
+    const decoratedNeed = need.map(c => ({
+      c,
+      k: letterRank(c, freq[c]) + oppPenalty(c)
+         + (Math.random() - 0.5) * (1 + 4 * boldness)
+    }));
     decoratedNeed.sort((a, b) => a.k - b.k);
     need.length = 0;
     for (const x of decoratedNeed) need.push(x.c);
-    // Sort available pool tokens by descending value, with random tiebreak.
-    const decoratedTokens = p.pool.map(t => ({ t, k: t.val + (Math.random() - 0.5) * 0.5 }));
+
+    // Sort tokens by descending value, with boldness-scaled jitter so equal/near-equal
+    // tokens get shuffled and a +5 sometimes lands on a non-obvious letter early on.
+    const decoratedTokens = p.pool.map(t => ({
+      t,
+      k: t.val + (Math.random() - 0.5) * (0.5 + 2 * boldness)
+    }));
     decoratedTokens.sort((a, b) => b.k - a.k);
     const sortedTokens = decoratedTokens.map(x => x.t);
     let i = 0;
