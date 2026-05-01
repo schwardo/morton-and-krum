@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Morton & Krum — Telegraph Race (2P)</title>
+<title>Morton & Krum — Telegraph Race</title>
 <style>
   :root {
     --bg: #1a1410;
@@ -15,6 +15,8 @@
     --rail: #5a4a3a;
     --p1: #b34a30;   /* terra-cotta */
     --p2: #2f6da3;   /* teal-blue */
+    --p3: #3b8c5a;   /* forest green */
+    --p4: #8b4ca3;   /* deep purple */
     --good: #2e7d3a;
     --bad: #b3392b;
     --neutral: #6a6a6a;
@@ -77,6 +79,8 @@
   }
   .train-pill.p1 { color: var(--p1); }
   .train-pill.p2 { color: var(--p2); }
+  .train-pill.p3 { color: var(--p3); }
+  .train-pill.p4 { color: var(--p4); }
   .train-pill .rank { font-weight: bold; letter-spacing: 1px; min-width: 56px; }
   .train-pill .who  { color: var(--paper); font-weight: bold; letter-spacing: 1px; }
   .train-pill .coal { color: var(--paper); margin-left: auto; opacity: 0.85; font-variant-numeric: tabular-nums; }
@@ -181,6 +185,14 @@
     background: rgba(47,109,163,.30);  /* P2 teal-blue tint */
     border-bottom-color: var(--p2);
   }
+  .blank.filled.pb3 {
+    background: rgba(59,140,90,.30);   /* P3 green tint */
+    border-bottom-color: var(--p3);
+  }
+  .blank.filled.pb4 {
+    background: rgba(139,76,163,.30);  /* P4 purple tint */
+    border-bottom-color: var(--p4);
+  }
   .blank .prompt {
     font-size: 10px;
     font-style: italic;
@@ -200,8 +212,13 @@
   .stat .label { font-size: 9px; letter-spacing: 3px; color: var(--brass); text-transform: uppercase; }
   .stat .val { font-size: 20px; color: var(--paper); font-weight: bold; }
 
-  /* Player panels */
-  #players { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  /* Player panels — JS sets `--player-cols` on #players to control the
+     auto-grid (1 col / 2 col / 3 col / 2x2). */
+  #players {
+    display: grid;
+    grid-template-columns: repeat(var(--player-cols, 2), minmax(0, 1fr));
+    gap: 12px;
+  }
   .player {
     position: relative;  /* anchor for absolutely-positioned .score-pop */
     border: 1px solid var(--brass-dark);
@@ -211,11 +228,35 @@
   }
   .player.p1 { border-top: 4px solid var(--p1); }
   .player.p2 { border-top: 4px solid var(--p2); }
+  .player.p3 { border-top: 4px solid var(--p3); }
+  .player.p4 { border-top: 4px solid var(--p4); }
   .player.active { box-shadow: 0 0 0 2px var(--brass), 0 4px 12px rgba(0,0,0,.4); }
   .player .name { font-size: 16px; font-weight: bold; letter-spacing: 4px; }
   .player.p1 .name { color: var(--p1); }
   .player.p2 .name { color: var(--p2); }
+  .player.p3 .name { color: var(--p3); }
+  .player.p4 .name { color: var(--p4); }
   .player .stats { display: flex; gap: 8px; margin: 6px 0 10px; flex-wrap: wrap; }
+  /* Compact-keyboard mode used when panels are narrow (e.g. 3-player layout fits
+     three columns into a 1200px container — full-size keyboards overflow). Keys,
+     bigram tiles, and row indents shrink so the keyboard fits in ~360px panels. */
+  .player.compact-kb { padding: 8px 8px; }
+  .player.compact-kb .keyboard { gap: 3px; }
+  .player.compact-kb .kbrow { gap: 3px; }
+  .player.compact-kb .kbrow.r2 { margin-left: 12px; }
+  .player.compact-kb .kbrow.r3 { margin-left: 26px; }
+  .player.compact-kb .key { width: 30px; height: 40px; }
+  .player.compact-kb .key .letter { font-size: 14px; }
+  .player.compact-kb .key .val { font-size: 9px; min-width: 16px; padding: 0 2px; margin-top: 2px; }
+  .player.compact-kb .key.key-ret { width: 44px; }
+  .player.compact-kb .key.key-ret .letter { font-size: 18px; }
+  .player.compact-kb .bigram-tile { min-width: 44px; height: 40px; padding: 0 4px; }
+  .player.compact-kb .bigram-tile .bg { font-size: 14px; }
+  .player.compact-kb .bigram-tile .val { font-size: 9px; padding: 0 2px; min-width: 18px; margin-top: 2px; }
+  .player.compact-kb .token { width: 26px; height: 26px; font-size: 11px; }
+  .player.compact-kb .name { font-size: 14px; letter-spacing: 3px; }
+  .player.compact-kb .stat { padding: 4px 8px; min-width: 56px; }
+  .player.compact-kb .stat .val { font-size: 16px; }
 
   /* Keyboard */
   .keyboard { display: flex; flex-direction: column; gap: 4px; align-items: center; user-select: none; margin: 6px 0; }
@@ -468,13 +509,13 @@
   /* Start-of-game dialog: rules summary + per-player config grid. */
   .start-modal { max-width: 700px !important; }
   .rules-body {
-    text-align: left; font-size: 17px; line-height: 1.5;
-    margin: 4px 0 12px; max-height: 50vh; overflow-y: auto;
+    text-align: left; font-size: 14px; line-height: 1.4;
+    margin: 4px 0 10px; max-height: 38vh; overflow-y: auto;
     padding: 0 4px;
   }
-  .rules-body p { margin: 6px 0; }
-  .rules-body ul { margin: 4px 0 8px 18px; padding: 0; }
-  .rules-body li { margin: 4px 0; font-size: 16px; line-height: 1.5; }
+  .rules-body p { margin: 4px 0; }
+  .rules-body ul { margin: 3px 0 6px 16px; padding: 0; }
+  .rules-body li { margin: 2px 0; font-size: 13px; line-height: 1.4; }
   .rules-body strong.p1 { color: var(--p1); }
   .rules-body strong.p2 { color: var(--p2); }
   .cfg-presets {
@@ -482,7 +523,9 @@
     margin: 4px 0 12px;
   }
   .cfg-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    display: grid;
+    grid-template-columns: repeat(var(--cfg-cols, 2), minmax(0, 1fr));
+    gap: 10px;
     margin: 8px 0 10px;
   }
   .cfg-col {
@@ -499,14 +542,42 @@
   }
   .cfg-col.p1 .cfg-name { color: var(--p1); }
   .cfg-col.p2 .cfg-name { color: var(--p2); }
-  .cfg-radios { display: flex; flex-direction: column; gap: 3px; }
-  .cfg-radios label {
-    display: flex; align-items: center; gap: 7px;
-    font-size: 14px; cursor: pointer;
-    padding: 4px 6px; border-radius: 3px;
+  .cfg-col.p3 .cfg-name { color: var(--p3); }
+  .cfg-col.p4 .cfg-name { color: var(--p4); }
+  .cfg-count {
+    display: flex; gap: 6px; justify-content: center;
+    margin: 0 0 10px;
   }
-  .cfg-radios label:hover { background: rgba(201,164,76,.12); }
-  .cfg-radios input[type=radio] { margin: 0; cursor: pointer; }
+  .cfg-count .cfg-count-label {
+    font-size: 11px; letter-spacing: 2px; color: var(--brass);
+    align-self: center; margin-right: 4px;
+  }
+  .cfg-count .count-btn {
+    background: transparent; color: var(--paper);
+    border: 1px solid var(--brass-dark);
+    width: 32px; height: 28px;
+    font-family: inherit; font-size: 13px;
+    cursor: pointer; border-radius: 3px;
+  }
+  .cfg-count .count-btn:hover { background: rgba(201,164,76,.1); }
+  .cfg-count .count-btn.active {
+    background: var(--brass-dark);
+    color: #1a1410;
+    border-color: var(--brass);
+    font-weight: bold;
+  }
+  .cfg-select {
+    width: 100%;
+    background: var(--paper);
+    color: var(--ink);
+    border: 1px solid var(--brass-dark);
+    border-radius: 3px;
+    padding: 5px 8px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .cfg-select:focus { outline: 2px solid var(--brass); outline-offset: 1px; }
   .modal p.cfg-hint {
     font-size: 12px; color: rgba(255,255,255,0.65);
     margin: 8px 0 0; font-style: italic; text-align: center;
@@ -547,6 +618,8 @@
   .modal .who { font-weight: bold; font-size: 22px; letter-spacing: 6px; margin: 10px 0; }
   .modal .who.p1 { color: var(--p1); }
   .modal .who.p2 { color: var(--p2); }
+  .modal .who.p3 { color: var(--p3); }
+  .modal .who.p4 { color: var(--p4); }
   .modal .actions { margin-top: 18px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
   .modal input[type=number] {
     background: var(--paper);
@@ -587,6 +660,8 @@
   }
   .pick-panel.pb1 { border-left-color: var(--p1); }
   .pick-panel.pb2 { border-left-color: var(--p2); }
+  .pick-panel.pb3 { border-left-color: var(--p3); }
+  .pick-panel.pb4 { border-left-color: var(--p4); }
   .pick-panel-header {
     font-size: 13px; letter-spacing: 2px;
     color: var(--brass);
@@ -600,6 +675,8 @@
   }
   .pick-panel-who.pb1 { color: var(--p1); border: 1px solid var(--p1); }
   .pick-panel-who.pb2 { color: var(--p2); border: 1px solid var(--p2); }
+  .pick-panel-who.pb3 { color: var(--p3); border: 1px solid var(--p3); }
+  .pick-panel-who.pb4 { color: var(--p4); border: 1px solid var(--p4); }
   .pick-section {
     margin-top: 8px; padding-top: 6px;
     border-top: 1px dashed var(--brass-dark);
@@ -663,12 +740,16 @@
   .recap td.bid-cell { font-weight: 500; }
   .recap td.bid-cell.pb1 { color: var(--p1); }
   .recap td.bid-cell.pb2 { color: var(--p2); }
+  .recap td.bid-cell.pb3 { color: var(--p3); }
+  .recap td.bid-cell.pb4 { color: var(--p4); }
   .recap td.bid-cell.won {
     font-weight: bold;
     box-shadow: inset 0 0 0 2px currentColor;
   }
   .recap td.bid-cell.pb1.won { background: rgba(179,74,48,.18); }
   .recap td.bid-cell.pb2.won { background: rgba(47,109,163,.18); }
+  .recap td.bid-cell.pb3.won { background: rgba(59,140,90,.18); }
+  .recap td.bid-cell.pb4.won { background: rgba(139,76,163,.18); }
 
   .help { font-size: 13px; opacity: .8; line-height: 1.5; margin-top: 6px; }
   .panel h2.howto-h { font-size: 15px; }
@@ -719,39 +800,7 @@
     </div>
   </div>
 
-  <div id="players">
-    <div class="player p1" id="player1">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div class="name" id="p1Name">PLAYER 1</div>
-        <div style="display:flex;gap:6px">
-          <div class="stat"><div class="label">Score</div><div class="val" id="p1Score">0</div></div>
-        </div>
-      </div>
-      <div class="keyboard" id="p1Keyboard"></div>
-      <div class="bigrams" id="p1Bigrams"></div>
-      <div class="tape" id="p1Tape"></div>
-      <div style="font-size:10px;letter-spacing:2px;color:var(--brass);margin-top:6px">TOKEN POOL</div>
-      <div class="pool" id="p1Pool"></div>
-      <div class="trades" id="p1Trades"></div>
-      <div id="p1Action"></div>
-    </div>
-
-    <div class="player p2" id="player2">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div class="name" id="p2Name">PLAYER 2</div>
-        <div style="display:flex;gap:6px">
-          <div class="stat"><div class="label">Score</div><div class="val" id="p2Score">0</div></div>
-        </div>
-      </div>
-      <div class="keyboard" id="p2Keyboard"></div>
-      <div class="bigrams" id="p2Bigrams"></div>
-      <div class="tape" id="p2Tape"></div>
-      <div style="font-size:10px;letter-spacing:2px;color:var(--brass);margin-top:6px">TOKEN POOL</div>
-      <div class="pool" id="p2Pool"></div>
-      <div class="trades" id="p2Trades"></div>
-      <div id="p2Action"></div>
-    </div>
-  </div>
+  <div id="players"></div>
 
   <div class="panel">
     <h2 class="howto-h">How to play</h2>
@@ -759,10 +808,10 @@
       <strong>Goal:</strong> Score the most points by typing telegrams across 6 stations.<br>
       <strong>Each round:</strong>
       (1) A telegram card is revealed with two prompt blanks (e.g., <em>color</em> + <em>zoo animal</em>).
-      (2) Both players blind-bid coal (pass-and-play). Higher bid arrives first; both pay their bid.
-      (3) The 1st-place player picks one blank and chooses a word for it. The 2nd-place player fills the remaining blank.
-      (4) Both players, in turn, assign value tokens (+5 to −2) to any unassigned letters in the two filled words and "transmit" to score.
-      <br><strong>Tiebreak:</strong> bid ties are broken randomly. <strong>Bids are paid even if you lose.</strong>
+      (2) Every player blind-bids coal (pass-and-play). Higher bid arrives first; everyone pays their bid.
+      (3) Players act in bid order: each may claim a bigram token <em>or</em> pick a word for an empty blank. The top two bidders fill the two blanks; lower bidders may only claim bigram tokens.
+      (4) All players, in turn, assign value tokens (+5 to −2) to any unassigned letters in the two filled words and "transmit" to score.
+      <br><strong>Tiebreak:</strong> bid ties favor the current leader. <strong>Bids are paid even if you lose.</strong>
     </div>
   </div>
 
@@ -1060,34 +1109,49 @@
 
   // ---------- State ----------
   let game;
+  const MIN_PLAYERS = 1;
+  const MAX_PLAYERS = 4;
+  // Player count chosen via the start dialog. Persists across games.
+  let numPlayers = 2;
   // Per-player config picked in the start dialog. Each entry is either
   // { type: "human" } or { type: "ai", strategy: "specialist"|"generalist"|"balanced" }.
-  // Default: human vs. balanced AI (the prior "ha" mode behavior).
+  // We hold a length-MAX_PLAYERS array so the user can flip between counts in the
+  // dialog without losing prior selections; only the first numPlayers entries are
+  // active when a game starts. Default: P1 human, the rest balanced AI.
   let playerConfig = [
     { type: "human" },
+    { type: "ai", strategy: "balanced" },
+    { type: "ai", strategy: "balanced" },
     { type: "ai", strategy: "balanced" },
   ];
   // Per-step delay for AI actions (ms).
   const AI_THINK_MS = 600;
   const AI_TOKEN_PLACE_MS = 350;
 
+  function fillN(n, v) { return Array.from({ length: n }, () => (typeof v === "function" ? v() : v)); }
+
   function newGame() {
+    buildPlayerPanels(numPlayers);
+    const players = [];
+    for (let i = 0; i < numPlayers; i++) players.push(makePlayer(i));
     game = {
       station: 0,                         // 0 means before the race begins
-      players: [makePlayer(0), makePlayer(1)],
+      numPlayers,
+      players,
       phase: "idle",                      // idle | reveal | bid | winner-pick | loser-pick | type | between | done
-      typingPlayer: null,                 // 0 or 1
+      typingPlayer: null,                 // playerIdx during type phase
       cards: pickAllCards(),              // 6 cards (one per station), revealed up-front
       card: null,                         // alias for cards[station-1] during a round
-      bids: [null, null],                 // current bids
+      bids: fillN(numPlayers, null),      // current bids
       winnerIdx: null,
-      // lane: 0 = front (current leader), 1 = back. P1 starts in front by default.
-      laneOrder: [0, 1],                  // laneOrder[lane] = playerIdx; index 0 is front
+      // lane: 0 = front (current leader). Initial order matches index order.
+      laneOrder: Array.from({ length: numPlayers }, (_, i) => i),
       history: [],                        // per-round summaries
       bigramPool: [...BIGRAMS, REPEAT_TOKEN],  // shared pool, depleted as players claim
       pickPass: 1,                        // 1 = bigrams allowed; 2 = words only
-      passOneActed: [false, false],       // each player's pass-1 action committed?
-      wordPickedBy: [false, false],       // has player N picked a word this round?
+      passOneActed: fillN(numPlayers, false),  // each player's pass-1 action committed?
+      wordPickedBy: fillN(numPlayers, false),  // has player N picked a word this round?
+      committed: fillN(numPlayers, false),     // has player N finalized type-phase assignments?
       viewStation: 1,                     // which station the telegram pager is showing
     };
     setMessage("");
@@ -1096,6 +1160,41 @@
     document.getElementById("primaryBtn").textContent = "Start Game";
     document.getElementById("primaryBtn").disabled = false;
     render();
+  }
+
+  // (Re)build the #players container with N panel templates. Idempotent: only
+  // rewrites the DOM if the existing player-count differs.
+  function buildPlayerPanels(n) {
+    const root = document.getElementById("players");
+    if (!root) return;
+    if (root.dataset.n === String(n)) return;
+    const cols = (n === 4) ? 2 : n;  // 4 players → 2x2 grid; 1/2/3 → that many columns
+    root.style.setProperty("--player-cols", cols);
+    root.dataset.n = String(n);
+    // 3-player layout puts three full-width keyboards into ~1/3 of the container
+    // each, which overflows. Switch to a compact key/tile size in that case.
+    const compactCls = n === 3 ? " compact-kb" : "";
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const k = i + 1;
+      parts.push(`
+        <div class="player p${k}${compactCls}" id="player${k}">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="name" id="p${k}Name">PLAYER ${k}</div>
+            <div style="display:flex;gap:6px">
+              <div class="stat"><div class="label">Score</div><div class="val" id="p${k}Score">0</div></div>
+            </div>
+          </div>
+          <div class="keyboard" id="p${k}Keyboard"></div>
+          <div class="bigrams" id="p${k}Bigrams"></div>
+          <div class="tape" id="p${k}Tape"></div>
+          <div style="font-size:10px;letter-spacing:2px;color:var(--brass);margin-top:6px">TOKEN POOL</div>
+          <div class="pool" id="p${k}Pool"></div>
+          <div class="trades" id="p${k}Trades"></div>
+          <div id="p${k}Action"></div>
+        </div>`);
+    }
+    root.innerHTML = parts.join("");
   }
 
   function pickAllCards() {
@@ -1148,11 +1247,12 @@
   function startRound() {
     game.station++;
     game.card = game.cards[game.station - 1];
-    game.bids = [null, null];
+    game.bids = fillN(game.numPlayers, null);
     game.winnerIdx = null;
     game.pickPass = 1;
-    game.passOneActed = [false, false];
-    game.wordPickedBy = [false, false];
+    game.passOneActed = fillN(game.numPlayers, false);
+    game.wordPickedBy = fillN(game.numPlayers, false);
+    game.committed = fillN(game.numPlayers, false);
     game.phase = "reveal";
     game.viewStation = game.station;  // pager auto-follows the live round
     clearTapes();
@@ -1177,8 +1277,7 @@
           if (!Number.isFinite(bid)) bid = 0;
           bid = Math.max(0, Math.min(p.coal, Math.round(bid)));
           game.bids[playerIdx] = bid;
-          if (playerIdx === 0) promptBid(1);
-          else resolveBids();
+          afterBid(playerIdx);
         } catch (e) {
           console.error("AI bid flow threw:", e);
           setMessage("AI error: " + e.message + " (see console)", true);
@@ -1188,39 +1287,51 @@
     }
     showModal({
       title: "PASS THE DEVICE",
-      whoClass: playerIdx === 0 ? "p1" : "p2",
+      whoClass: `p${playerIdx + 1}`,
       whoText: `Player ${playerIdx + 1}`,
       body: `<p>Place your blind coal bid.</p>
              <p>You have <strong>${p.coal}</strong> coal.<br>
-             Higher bid wins the right to pick first. Both players pay their bid.</p>
+             Higher bid arrives first. Everyone pays their bid.</p>
              <p style="margin-top:10px"><input type="number" id="bidInput" min="0" max="${p.coal}" value="0" /></p>`,
       buttons: [
         { label: "Submit Bid", primary: true, action: () => {
             const v = Math.max(0, Math.min(p.coal, parseInt(document.getElementById("bidInput").value || "0", 10) || 0));
             game.bids[playerIdx] = v;
             closeOverlay();
-            if (playerIdx === 0) promptBid(1);
-            else resolveBids();
+            afterBid(playerIdx);
           }},
       ],
     });
     setTimeout(() => { const i = document.getElementById("bidInput"); if (i) { i.focus(); i.select(); } }, 50);
   }
 
+  function afterBid(playerIdx) {
+    if (playerIdx + 1 < game.numPlayers) promptBid(playerIdx + 1);
+    else resolveBids();
+  }
+
+  // Compute pick/picking order for this round: descending by bid, ties broken by
+  // current laneOrder (front-of-train wins). Returns an array of playerIdx.
+  function bidOrder() {
+    const idxs = Array.from({ length: game.numPlayers }, (_, i) => i);
+    return idxs.sort((a, b) => {
+      const d = (game.bids[b] ?? 0) - (game.bids[a] ?? 0);
+      if (d !== 0) return d;
+      return game.laneOrder.indexOf(a) - game.laneOrder.indexOf(b);
+    });
+  }
+
   function resolveBids() {
-    const [b1, b2] = game.bids;
-    game.players[0].coal -= b1;
-    game.players[1].coal -= b2;
-    let winner, tieBroken = false;
-    if (b1 > b2) winner = 0;
-    else if (b2 > b1) winner = 1;
-    else { winner = game.laneOrder[0]; tieBroken = true; }  // tie → current front lane wins
-    game.winnerIdx = winner;
-    // Update lane order: winner moves to front, loser to back.
-    game.laneOrder = [winner, 1 - winner];
+    for (let i = 0; i < game.numPlayers; i++) game.players[i].coal -= game.bids[i];
+    const order = bidOrder();
+    game.winnerIdx = order[0];
+    game.laneOrder = order;  // bid order becomes the new train order
     game.phase = "bid-resolved";
-    const tieNote = tieBroken ? " (tie → current leader)" : "";
-    setMessage(`P1 bid ${b1} · P2 bid ${b2}. Player ${winner + 1} arrives first${tieNote}.`);
+    // Detect any tie at the top — note it in the status message.
+    const tieAtTop = game.numPlayers > 1 && game.bids[order[0]] === game.bids[order[1]];
+    const tieNote = tieAtTop ? " (tie → current leader)" : "";
+    const bidStr = game.bids.map((b, i) => `P${i + 1} ${b}`).join(" · ");
+    setMessage(`${bidStr}. Player ${order[0] + 1} arrives first${tieNote}.`);
     render();
   }
 
@@ -1244,24 +1355,30 @@
     setTimeout(() => advancePickPhase(), 150);
   }
 
-  // Drives the word-selection flow. Pass 1: each player gets one action and may
-  // choose a word OR claim a bigram. Pass 2 (only if a slot is still empty):
-  // players who haven't picked a word must do so now; bigrams are not allowed.
+  // Drives the word-selection flow. Pass 1: every player (in bid order) gets
+  // one action and may choose a word OR claim a bigram. Pass 2 (only if a slot
+  // is still empty): players who haven't picked a word must do so now in bid
+  // order until both blanks are filled; bigrams are not allowed. With N=1, the
+  // single player may need to pick both blanks back-to-back.
   function advancePickPhase() {
     if (game.card.picks.every(Boolean)) { afterPicksDone(); return; }
-    const winner = game.winnerIdx, loser = 1 - winner;
+    const order = bidOrder();
     let nextPlayer = null;
     if (game.pickPass === 1) {
-      if (!game.passOneActed[winner]) nextPlayer = winner;
-      else if (!game.passOneActed[loser]) nextPlayer = loser;
-      else game.pickPass = 2;
+      nextPlayer = order.find(idx => !game.passOneActed[idx]);
+      if (nextPlayer == null) game.pickPass = 2;
     }
     if (game.pickPass === 2 && nextPlayer == null) {
-      if (!game.wordPickedBy[winner]) nextPlayer = winner;
-      else if (!game.wordPickedBy[loser]) nextPlayer = loser;
+      nextPlayer = order.find(idx => !game.wordPickedBy[idx]);
+      // N=1 fallback: solo player has already filled one slot but the other is
+      // still open. Reset their flag and let them pick again.
+      if (nextPlayer == null) {
+        nextPlayer = order[0];
+        game.wordPickedBy[nextPlayer] = false;
+      }
     }
     if (nextPlayer == null) { afterPicksDone(); return; }
-    game.phase = nextPlayer === winner ? "winner-pick" : "loser-pick";
+    game.phase = nextPlayer === game.winnerIdx ? "winner-pick" : "loser-pick";
     promptPickAction(nextPlayer, game.pickPass === 1);
   }
 
@@ -1321,7 +1438,12 @@
     if (!panel) return;
     const isPick = game.phase === "winner-pick" || game.phase === "loser-pick";
     if (!isPick || !game.card) { panel.innerHTML = ""; return; }
-    const playerIdx = game.phase === "winner-pick" ? game.winnerIdx : (1 - game.winnerIdx);
+    // Whoever advancePickPhase would route to next is the active picker.
+    const order = bidOrder();
+    const playerIdx = (game.pickPass === 1)
+      ? order.find(i => !game.passOneActed[i])
+      : order.find(i => !game.wordPickedBy[i]);
+    if (playerIdx == null) { panel.innerHTML = ""; return; }
     const p = game.players[playerIdx];
     if (p.isAI) { panel.innerHTML = ""; return; }
     const allowBigram = game.pickPass === 1;
@@ -1389,35 +1511,97 @@
 
   function afterPicksDone() {
     game.phase = "type";
-    game.typingPlayer = 0;
-    setMessage(`Both words chosen. Now Player 1 transmits.`);
-    showPassToType(0);
+    game.committed = fillN(game.numPlayers, false);
+    // First human player (if any) becomes the active typing player. Lower-index
+    // humans go first; later humans pass-the-device when the prior commits.
+    const firstHuman = game.players.findIndex(p => !p.isAI);
+    game.typingPlayer = firstHuman >= 0 ? firstHuman : null;
+    // Kick off every CPU player concurrently. Their assign animations play in
+    // parallel with each other and with any human(s) still placing tokens.
+    for (let i = 0; i < game.numPlayers; i++) {
+      if (game.players[i].isAI) startAiAssign(i);
+    }
+    if (firstHuman >= 0) {
+      setMessage(`Both words chosen. Now Player ${firstHuman + 1} transmits.`);
+      showPassToType(firstHuman);
+    } else {
+      setMessage("All-CPU round: assigning values…");
+    }
     render();
+  }
+
+  // Schedule an AI assign flow for `playerIdx`. Wraps aiAssignFlow's onDone so
+  // the player commits and we can run the parallel typing animation once all
+  // players (CPU + human) are committed.
+  function startAiAssign(playerIdx) {
+    setTimeout(() => {
+      try { aiAssignFlow(playerIdx, () => commitPlayer(playerIdx)); }
+      catch (e) {
+        console.error("AI assign flow threw:", e);
+        setMessage("AI error: " + e.message + " (see console)", true);
+      }
+    }, AI_THINK_MS);
+  }
+
+  // Mark `playerIdx` as done assigning. Called from human's Ready button via
+  // `transmit` and from each AI's aiAssignFlow onDone. Once every player is
+  // committed, the parallel typing animation runs.
+  function commitPlayer(playerIdx) {
+    if (game.phase !== "type") return;
+    if (game.committed[playerIdx]) return;
+    game.committed[playerIdx] = true;
+    if (game.committed.every(Boolean)) {
+      startParallelAnimations();
+      return;
+    }
+    // If the just-committed player is the active human, hand off to the next
+    // un-committed human (if any). Otherwise the active human is unchanged
+    // — an AI just finished, but the human is still placing tokens.
+    if (playerIdx === game.typingPlayer) {
+      const nextHuman = findNextUncommittedHuman();
+      if (nextHuman != null) {
+        game.typingPlayer = nextHuman;
+        render();
+        setTimeout(() => showPassToType(nextHuman), 350);
+      } else {
+        // No more humans to pass to; remaining players are AI mid-assign.
+        game.typingPlayer = null;
+        setMessage("Waiting for CPU players to finish…");
+        render();
+      }
+    } else {
+      // AI just finished while the human is still active; just refresh.
+      render();
+    }
+  }
+
+  function findNextUncommittedHuman() {
+    for (let i = 0; i < game.numPlayers; i++) {
+      if (!game.players[i].isAI && !game.committed[i]) return i;
+    }
+    return null;
   }
 
   function showPassToType(playerIdx) {
     const p = game.players[playerIdx];
-    if (p.isAI) {
-      setMessage(`CPU ${playerIdx + 1} is assigning values…`);
-      setTimeout(() => {
-        try { aiAssignFlow(playerIdx, () => transmit(playerIdx)); }
-        catch (e) {
-          console.error("AI assign flow threw:", e);
-          setMessage("AI error: " + e.message + " (see console)", true);
-        }
-      }, AI_THINK_MS);
-      render();
-      return;
-    }
+    if (p.isAI) return;  // AI players are kicked off via startAiAssign, no modal
     const words = game.card.picks.filter(Boolean);
     const wordsHTML = words.map(w => `<span style="font-weight:bold">${w}</span>↵`).join(" &nbsp; ");
-    const otherDone = playerIdx === 1 ? "Player 1 has committed their values. " : "";
+    // Mention any humans before this one who already committed (CPUs don't
+    // pass-the-device, so no need to call them out).
+    const priorHumans = [];
+    for (let i = 0; i < playerIdx; i++) {
+      if (!game.players[i].isAI && game.committed[i]) priorHumans.push(`Player ${i + 1}`);
+    }
+    const otherDone = priorHumans.length > 0
+      ? `${priorHumans.join(", ")} ${priorHumans.length === 1 ? "has" : "have"} committed their values. `
+      : "";
     showModal({
       title: "PASS THE DEVICE",
-      whoClass: playerIdx === 0 ? "p1" : "p2",
+      whoClass: `p${playerIdx + 1}`,
       whoText: `Player ${playerIdx + 1}`,
       body: `<p>${otherDone}Assign a value token to every letter in this round's two words and to the ↵ (RETURN) key, then click <strong>Ready</strong>.</p>
-             <p>The scoring animation plays after both players are ready.</p>
+             <p>The scoring animation plays after every player is ready.</p>
              <p style="font-family:monospace;background:var(--paper);color:var(--ink);padding:8px;border-radius:3px;letter-spacing:1px;font-size:14px">${wordsHTML}</p>`,
       buttons: [{ label: "Begin", primary: true, action: () => { closeOverlay(); render(); } }],
     });
@@ -1427,9 +1611,11 @@
   // that haven't been assigned yet, plus any claimed bigrams without a value.
   // Letters are 1-char strings; bigrams are 2-char strings, distinguishable by
   // length. Empty when the pool is exhausted (Ready unblocks; remaining items
-  // hard-score at EMPTY_POOL_PENALTY when typed).
+  // hard-score at EMPTY_POOL_PENALTY when typed) or when the player has already
+  // committed (= clicked Ready / AI assign loop finished).
   function neededLetters(playerIdx) {
-    if (game.phase !== "type" || game.typingPlayer !== playerIdx) return new Set();
+    if (game.phase !== "type") return new Set();
+    if (game.committed && game.committed[playerIdx]) return new Set();
     const p = game.players[playerIdx];
     if (p.pool.length === 0) return new Set();
     const out = new Set();
@@ -1452,19 +1638,14 @@
   // Animation pacing for typing each letter (ms).
   const TYPE_TICK_MS = 1000;
 
-  // "Ready" — finalize the active player's assignments and either hand off to the
-  // other player, or (once both have committed) start the parallel scoring animation.
+  // "Ready" — finalize the active human player's assignments and route through
+  // commitPlayer, which handles handoff to the next human or kicks off the
+  // parallel scoring animation once every player is committed.
   function transmit(playerIdx) {
     if (game.phase !== "type" || game.typingPlayer !== playerIdx) return;
     const need = neededLetters(playerIdx);
     if (need.size > 0) { setMessage("Assign every letter (and RETURN) first.", true); return; }
-    if (playerIdx === 0) {
-      game.typingPlayer = 1;
-      render();
-      setTimeout(() => showPassToType(1), 350);
-    } else {
-      startParallelAnimations();
-    }
+    commitPlayer(playerIdx);
   }
 
   function buildTypingSeq(playerIdx) {
@@ -1516,7 +1697,7 @@
   function startParallelAnimations() {
     game.phase = "typing-anim";
     game.typingPlayer = null;
-    game.anims = [0, 1].map(idx => {
+    game.anims = Array.from({ length: game.numPlayers }, (_, idx) => {
       const { seq, words } = buildTypingSeq(idx);
       return { playerIdx: idx, seq, pos: 0, runningTotal: 0, wordTotals: [0, 0], words };
     });
@@ -1545,7 +1726,7 @@
 
   function finishParallelAnimations() {
     const totals = [];
-    const wordScores = [];  // [P1's [wordA, wordB], P2's [wordA, wordB]]
+    const wordScores = [];  // wordScores[playerIdx][slot] = points
     for (const a of game.anims) {
       const p = game.players[a.playerIdx];
       p.score += a.runningTotal;
@@ -1554,7 +1735,8 @@
       wordScores[a.playerIdx] = [...a.wordTotals];
     }
     game.anims = null;
-    setMessage(`Round ${game.station}: P1 ${signed(totals[0])} · P2 ${signed(totals[1])}.`);
+    const summary = totals.map((t, i) => `P${i + 1} ${signed(t)}`).join(" · ");
+    setMessage(`Round ${game.station}: ${summary}.`);
     game.history.push({
       station: game.station,
       bids: [...game.bids],
@@ -1609,97 +1791,112 @@
   }
 
   function clearTapes() {
-    for (let i = 1; i <= 2; i++) {
+    const n = (game && game.numPlayers) || numPlayers;
+    for (let i = 1; i <= n; i++) {
       const t = document.getElementById(`p${i}Tape`);
       if (t) t.innerHTML = "";
     }
   }
 
+  // Returns { winners: [playerIdx,...], topScore }. Multiple winners = a tie.
+  function finalRanking() {
+    const scores = game.players.map(p => p.score);
+    const top = Math.max(...scores);
+    const winners = [];
+    scores.forEach((s, i) => { if (s === top) winners.push(i); });
+    return { winners, topScore: top };
+  }
+
+  function winLabelFromRanking(r) {
+    if (r.winners.length === 1) return `Player ${r.winners[0] + 1} wins!`;
+    if (r.winners.length === game.numPlayers) return "It's a tie!";
+    return `Tie: ${r.winners.map(i => `P${i + 1}`).join(", ")}.`;
+  }
+
   function endGame() {
     game.phase = "done";
     game.typingPlayer = null;
-    const s1 = game.players[0].score, s2 = game.players[1].score;
-    let winLabel;
-    if (s1 > s2) winLabel = "Player 1 wins!";
-    else if (s2 > s1) winLabel = "Player 2 wins!";
-    else winLabel = "It's a tie!";
-    setMessage(`Final: P1 ${s1} · P2 ${s2}. ${winLabel}`);
+    const r = finalRanking();
+    const summary = game.players.map((p, i) => `P${i + 1} ${p.score}`).join(" · ");
+    setMessage(`Final: ${summary}. ${winLabelFromRanking(r)}`);
     render();
     // Pop the final-recap modal after a short beat so the last typing animation
     // can settle and the user sees the winner line before the overlay covers it.
     setTimeout(showFinalRecapModal, 700);
   }
 
-  // Build the round-by-round recap table as HTML. Used both inline (under the
-  // board) and inside the end-of-game modal. Each station expands to two
+  // Build the round-by-round recap table as HTML. Each station expands to two
   // sub-rows (word A, word B). The Word and By cells are colored by picker so
-  // it's easy to see — for both players — what each earned on the word *they*
-  // chose vs. the word the opponent chose.
+  // it's easy to see, for every player, what each earned on the word *they*
+  // chose vs. the words others chose. Bid columns + score columns scale with
+  // game.numPlayers.
   function buildRecapTableHTML() {
+    const N = game.numPlayers;
     const rows = [];
     game.history.forEach((h, i) => {
-      const ws = h.wordScores || [
-        [h.scores ? h.scores[0] : 0, 0],
-        [h.scores ? h.scores[1] : 0, 0],
-      ];
+      const ws = h.wordScores || Array.from({ length: N }, (_, pi) =>
+        [h.scores ? h.scores[pi] || 0 : 0, 0]);
       // Bid cells live to the left of the word; the round-winner's cell is bolded.
       const bidCell = (pi) => {
         const won = h.winner === pi;
         const cls = `bid-cell num pb${pi+1}` + (won ? " won" : "");
-        return `<td class="${cls}" rowspan="2">${h.bids[pi]}</td>`;
+        return `<td class="${cls}" rowspan="2">${h.bids[pi] ?? ""}</td>`;
       };
+      const bidCells = Array.from({ length: N }, (_, pi) => bidCell(pi)).join("");
       for (let slot = 0; slot < 2; slot++) {
         const w = h.words[slot] || "—";
         const pi = h.pickedBy ? h.pickedBy[slot] : null;
         const pColor = pi == null ? "" : `color:var(--p${pi+1});`;
         const wordHTML = `<span style="${pColor}font-weight:bold">${w}</span>`;
         const byHTML = pi == null ? "—" : `<span style="${pColor}">P${pi+1}</span>`;
-        const p1Cell = `<td class="num" style="color:var(--p1)">${signed(ws[0][slot] || 0)}</td>`;
-        const p2Cell = `<td class="num" style="color:var(--p2)">${signed(ws[1][slot] || 0)}</td>`;
+        const scoreCells = Array.from({ length: N }, (_, pj) =>
+          `<td class="num" style="color:var(--p${pj+1})">${signed((ws[pj] && ws[pj][slot]) || 0)}</td>`).join("");
         if (slot === 0) {
           rows.push(`<tr class="sub-1">
             <td rowspan="2">${i + 1}</td>
-            ${bidCell(0)}${bidCell(1)}
+            ${bidCells}
             <td>${wordHTML}</td><td>${byHTML}</td>
-            ${p1Cell}${p2Cell}
+            ${scoreCells}
           </tr>`);
         } else {
           rows.push(`<tr class="sub-2">
             <td>${wordHTML}</td><td>${byHTML}</td>
-            ${p1Cell}${p2Cell}
+            ${scoreCells}
           </tr>`);
         }
       }
     });
+    const headBid = Array.from({ length: N }, (_, pi) =>
+      `<th class="num" style="color:var(--p${pi+1})">P${pi+1} bid</th>`).join("");
+    const headScore = Array.from({ length: N }, (_, pi) =>
+      `<th class="num" style="color:var(--p${pi+1})">P${pi+1}</th>`).join("");
+    const footScore = Array.from({ length: N }, (_, pi) =>
+      `<td class="num" style="color:var(--p${pi+1})">${signed(game.players[pi].score)}</td>`).join("");
+    // Total row spans: # + N bid cols + Word + By = 3 + N
     return `<table class="recap">
       <thead><tr>
         <th>#</th>
-        <th class="num" style="color:var(--p1)">P1 bid</th>
-        <th class="num" style="color:var(--p2)">P2 bid</th>
+        ${headBid}
         <th>Word</th><th>By</th>
-        <th class="num" style="color:var(--p1)">P1</th>
-        <th class="num" style="color:var(--p2)">P2</th>
+        ${headScore}
       </tr></thead>
       <tbody>${rows.join("")}</tbody>
-      <tfoot><tr><td colspan="5">TOTAL</td>
-        <td class="num" style="color:var(--p1)">${signed(game.players[0].score)}</td>
-        <td class="num" style="color:var(--p2)">${signed(game.players[1].score)}</td></tr></tfoot>
+      <tfoot><tr><td colspan="${3 + N}">TOTAL</td>
+        ${footScore}</tr></tfoot>
     </table>`;
   }
 
   // End-of-game modal: winner banner + full recap table + Play Again. Reachable
   // automatically when the game ends, and via the primary button afterward.
   function showFinalRecapModal() {
-    const s1 = game.players[0].score, s2 = game.players[1].score;
-    let winnerLine, whoClass;
-    if (s1 > s2)      { winnerLine = "Player 1 wins!"; whoClass = "p1"; }
-    else if (s2 > s1) { winnerLine = "Player 2 wins!"; whoClass = "p2"; }
-    else              { winnerLine = "It's a tie!";    whoClass = ""; }
-    const finalLine = `<p style="font-size:18px;margin:6px 0 14px">
-        <span style="color:var(--p1)">P1: <strong>${s1}</strong></span>
-        &nbsp;·&nbsp;
-        <span style="color:var(--p2)">P2: <strong>${s2}</strong></span>
-      </p>`;
+    const r = finalRanking();
+    const winnerLine = winLabelFromRanking(r);
+    const whoClass = r.winners.length === 1 ? `p${r.winners[0] + 1}` : "";
+    const finalLine = `<p style="font-size:18px;margin:6px 0 14px">${
+      game.players.map((p, i) =>
+        `<span style="color:var(--p${i+1})">P${i+1}: <strong>${p.score}</strong></span>`
+      ).join(" &nbsp;·&nbsp; ")
+    }</p>`;
     showModal({
       title: "FINAL TRANSMISSION",
       whoClass,
@@ -1719,8 +1916,7 @@
     renderTrainOrder();
     renderCard();
     renderPickPanel();
-    renderPlayer(0);
-    renderPlayer(1);
+    for (let i = 0; i < game.numPlayers; i++) renderPlayer(i);
     renderPrimary();
     renderActiveHighlight();
   }
@@ -1734,18 +1930,30 @@
                 : "";
       return `CPU ${n}${tag}`;
     };
-    document.getElementById("p1Name").textContent = aiLabel(game.players[0], 1);
-    document.getElementById("p2Name").textContent = aiLabel(game.players[1], 2);
+    for (let i = 0; i < game.numPlayers; i++) {
+      const node = document.getElementById(`p${i+1}Name`);
+      if (node) node.textContent = aiLabel(game.players[i], i + 1);
+    }
+    // Phase title for type phase: name the active human (if any) or call out
+    // that all CPUs are working in parallel.
+    let tpLabel;
+    if (game.typingPlayer != null) {
+      tpLabel = `Player ${game.typingPlayer + 1} Assigns Values`;
+    } else if (game.committed && game.committed.some(c => !c)) {
+      tpLabel = "CPUs Assigning Values";
+    } else {
+      tpLabel = "Assignments Complete";
+    }
     document.getElementById("phaseTitle").textContent =
       ({ idle: "Round", reveal: "Card Revealed — Bid Coal", bid: "Bidding…",
          "bid-resolved": "Bids Revealed",
-         "winner-pick": "1st-place Picks", "loser-pick": "2nd-place Picks",
-         type: `${game.players[game.typingPlayer||0].isAI?"CPU":"Player"} ${(game.typingPlayer||0)+1} Assigns Values`,
-         "typing-anim": "Both Transmit",
+         "winner-pick": "1st-place Picks", "loser-pick": "Next Picks",
+         type: tpLabel,
+         "typing-anim": "All Transmit",
          between: "Round Complete", done: "Game Over" })[game.phase] || "Round";
   }
 
-  // Train-order strip: replaces the old board image. Two pills, ordered
+  // Train-order strip: replaces the old board image. One pill per player, ordered
   // by current laneOrder (leader on the left), each showing player name and
   // remaining coal.
   function renderTrainOrder() {
@@ -1753,12 +1961,17 @@
     if (!el) return;
     const aiTag = (p) => p.strategy === "specialist" ? " · SPEC"
                       : p.strategy === "generalist" ? " · GEN" : "";
+    const rankLabel = (lane) => {
+      if (lane === 0) return "🚂 1st";
+      if (lane === 1) return "🚃 2nd";
+      if (lane === 2) return "🚃 3rd";
+      return `🚃 ${lane + 1}th`;
+    };
     el.innerHTML = game.laneOrder.map((pIdx, lane) => {
       const p = game.players[pIdx];
-      const rank = lane === 0 ? "🚂 1st" : "🚃 2nd";
       const who = p.isAI ? `CPU ${pIdx + 1}${aiTag(p)}` : `PLAYER ${pIdx + 1}`;
       return `<div class="train-pill p${pIdx + 1}">
-        <span class="rank">${rank}</span>
+        <span class="rank">${rankLabel(lane)}</span>
         <span class="who">${who}</span>
         <span class="coal"><strong>${p.coal}</strong> coal</span>
       </div>`;
@@ -1801,9 +2014,12 @@
     let html = renderTelegramHTML(card, isCurrent);
     if (isPast && game.history[vs - 1]) {
       const h = game.history[vs - 1];
+      const bidStr = h.bids.map(b => b ?? 0).join(" / ");
+      const scoreStr = h.scores.map((s, i) =>
+        `P${i+1} <strong style="color:var(--p${i+1})">${signed(s)}</strong>`).join(" &nbsp; ");
       html += `<div class="past-summary" style="margin-top:14px;padding-top:8px;border-top:1px dashed #b39a6a;font-size:12px;color:#6a5530;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-        <span>Bids ${h.bids[0]} / ${h.bids[1]} · 1st: <strong style="color:var(--p${h.winner+1})">P${h.winner+1}</strong></span>
-        <span>P1 <strong style="color:var(--p1)">${signed(h.scores[0])}</strong> &nbsp; P2 <strong style="color:var(--p2)">${signed(h.scores[1])}</strong></span>
+        <span>Bids ${bidStr} · 1st: <strong style="color:var(--p${h.winner+1})">P${h.winner+1}</strong></span>
+        <span>${scoreStr}</span>
       </div>`;
     }
     body.innerHTML = html;
@@ -1858,9 +2074,13 @@
       setTimeout(() => {
         document.querySelectorAll("#cardBody .blank.pickable").forEach(el =>
           el.addEventListener("click", () => {
-            const winner = game.winnerIdx, loser = 1 - winner;
-            if (game.phase === "winner-pick") promptPickAction(winner, game.pickPass === 1);
-            else if (game.phase === "loser-pick") promptPickAction(loser, game.pickPass === 1);
+            // Re-derive the next picker (whoever advancePickPhase would call now)
+            // so clicking the blank reopens the inline picker for them.
+            const order = bidOrder();
+            const next = (game.pickPass === 1)
+              ? order.find(i => !game.passOneActed[i])
+              : order.find(i => !game.wordPickedBy[i]);
+            if (next != null) promptPickAction(next, game.pickPass === 1);
           }));
       }, 0);
     }
@@ -2045,14 +2265,17 @@
   }
 
   function renderActiveHighlight() {
-    const p1Active =
-      (game.phase === "type" && game.typingPlayer === 0) ||
-      (game.phase === "typing-anim");
-    const p2Active =
-      (game.phase === "type" && game.typingPlayer === 1) ||
-      (game.phase === "typing-anim");
-    document.getElementById("player1").classList.toggle("active", p1Active);
-    document.getElementById("player2").classList.toggle("active", p2Active);
+    const animPhase = game.phase === "typing-anim";
+    const typePhase = game.phase === "type";
+    for (let i = 0; i < game.numPlayers; i++) {
+      const node = document.getElementById(`player${i+1}`);
+      if (!node) continue;
+      // Highlight: typing animation = everyone; type phase = anyone not yet
+      // committed (CPUs mid-assign and the active human).
+      const isActive = animPhase
+        || (typePhase && game.committed && !game.committed[i]);
+      node.classList.toggle("active", isActive);
+    }
   }
 
   function renderPrimary() {
@@ -2089,51 +2312,71 @@
 
   // ---------- Start dialog ----------
   // Shown on page load and on Start Game / Play Again / Reset. Explains the theme
-  // and rules, then collects per-player human/AI selections (with AI strategy).
-  // Three preset buttons populate the radios: HvH, HvCPU, CPUvCPU. The CPUvCPU
-  // preset deliberately picks specialist+generalist so the matchup exercises both
-  // strategies. Clicking "Begin Game" commits playerConfig and starts round 1.
+  // and rules, lets the user pick player count (1–4), and collects per-player
+  // human/AI selections (with AI strategy). Three preset buttons populate the
+  // radios: All Human, Human vs CPUs, All CPU. The All-CPU preset alternates
+  // specialist/generalist so the matchup exercises both styles when N=2.
   function showStartDialog() {
     const STRATEGY_OPTS = [
       ["human",      "Human"],
-      ["specialist", "AI &mdash; Specialist"],
-      ["generalist", "AI &mdash; Generalist"],
-      ["balanced",   "AI &mdash; Balanced"],
+      ["specialist", "AI — Specialist"],
+      ["generalist", "AI — Generalist"],
+      ["balanced",   "AI — Balanced"],
     ];
-    const radioFor = (pIdx) => {
+    const selectFor = (pIdx) => {
       const cfg = playerConfig[pIdx];
       const cur = cfg.type === "human" ? "human" : cfg.strategy;
-      return STRATEGY_OPTS.map(([val, lbl]) =>
-        `<label><input type="radio" name="p${pIdx+1}-type" value="${val}" ${val===cur?"checked":""}>${lbl}</label>`
+      const opts = STRATEGY_OPTS.map(([val, lbl]) =>
+        `<option value="${val}" ${val===cur?"selected":""}>${lbl}</option>`
       ).join("");
+      return `<select class="cfg-select" name="p${pIdx+1}-type">${opts}</select>`;
     };
+    const flavor = numPlayers === 2
+      ? `Two telegraph operators &mdash; <strong class="p1">Morton</strong> and <strong class="p2">Krum</strong> &mdash; race their trains across <strong>6 stations</strong> from the wild frontier back to HQ.`
+      : `Up to four telegraph operators race their trains across <strong>6 stations</strong> from the wild frontier back to HQ.`;
     const rules = `
       <div class="rules-body">
-        <p><strong>The setting.</strong> Two telegraph operators &mdash; <strong class="p1">Morton</strong> and <strong class="p2">Krum</strong> &mdash; race their trains across <strong>6 stations</strong> from the wild frontier back to HQ. At every station a telegram with two blanks comes off the wire, and both must transmit it to score.</p>
+        <p><strong>The setting.</strong> ${flavor} At every station a telegram with two blanks comes off the wire, and every operator transmits it to score.</p>
         <p><strong>How a round works:</strong></p>
         <ul>
-          <li><strong>Bid coal.</strong> Both blind-bid coal (starting stockpile: 30). Higher bid arrives first (ties broken in favor of the current leader). Both pay their bid.</li>
-          <li><strong>Pick.</strong> First-arriver picks one blank and a word from its prompt category (or types a custom word). Second-arriver fills the other. Either may instead claim a <strong>bigram token</strong> (e.g. ER, ST) or <strong>↻ REPEAT</strong> from the shared pool &mdash; one-time pick, fires for the rest of the game.</li>
+          <li><strong>Bid coal.</strong> Everyone blind-bids coal (starting stockpile: 30). Higher bid arrives first (ties broken in favor of the current leader). Everyone pays their bid.</li>
+          <li><strong>Pick.</strong> Players act in bid order: each may pick a word for an empty blank (from a category prompt or a custom word) <em>or</em> claim a <strong>bigram token</strong> (e.g. ER, ST) or <strong>↻ REPEAT</strong> from the shared pool. Once both blanks are filled, picking ends &mdash; lower bidders who haven't acted are shut out for the round.</li>
           <li><strong>Assign.</strong> You have 27 value tokens (+5 down to &minus;2). Place one on every letter and on ↵ for the round's words. Optionally split a token (N &rarr; 2&times;(N&minus;1)) or merge (2&times;N &rarr; N+1) to reshape the pool.</li>
-          <li><strong>Transmit.</strong> Both players type their words in parallel, one keystroke per tick. Bigrams fire on their pair (assigned + 5). REPEAT fires on any letter that matches the previous letter typed in the word (assigned + 2).</li>
+          <li><strong>Transmit.</strong> All players type their words in parallel, one keystroke per tick. Bigrams fire on their pair (assigned + 5). REPEAT fires on any letter that matches the previous letter typed in the word (assigned + 2).</li>
         </ul>
         <p><strong>Win:</strong> highest score after 6 stations. Empty pool? Remaining unassigned letters auto-score &minus;4.</p>
       </div>`;
+    const countBtns = [];
+    for (let n = MIN_PLAYERS; n <= MAX_PLAYERS; n++) {
+      countBtns.push(`<button class="count-btn ${n === numPlayers ? "active" : ""}" data-count="${n}">${n}</button>`);
+    }
+    const countRow = `
+      <div class="cfg-count">
+        <span class="cfg-count-label">PLAYERS</span>
+        ${countBtns.join("")}
+      </div>`;
+    const cfgCols = [];
+    for (let i = 0; i < numPlayers; i++) {
+      const themeName = (numPlayers === 2 && i === 0) ? "Morton"
+                      : (numPlayers === 2 && i === 1) ? "Krum"
+                      : "";
+      const label = `Player ${i + 1}${themeName ? ` &mdash; ${themeName}` : ""}`;
+      cfgCols.push(`
+        <div class="cfg-col p${i+1}">
+          <span class="cfg-name">${label}</span>
+          ${selectFor(i)}
+        </div>`);
+    }
+    const cfgGridCols = numPlayers === 4 ? 2 : numPlayers;
     const cfg = `
+      ${countRow}
       <div class="cfg-presets">
-        <button class="ghost preset-btn" data-preset="hh">Human vs Human</button>
-        <button class="ghost preset-btn" data-preset="ha">Human vs CPU</button>
-        <button class="ghost preset-btn" data-preset="aa">CPU vs CPU</button>
+        <button class="ghost preset-btn" data-preset="hh">All Human</button>
+        <button class="ghost preset-btn" data-preset="ha">Human vs CPU${numPlayers > 2 ? "s" : ""}</button>
+        <button class="ghost preset-btn" data-preset="aa">All CPU</button>
       </div>
-      <div class="cfg-grid">
-        <div class="cfg-col p1">
-          <span class="cfg-name">Player 1 &mdash; Morton</span>
-          <div class="cfg-radios" id="p1Radios">${radioFor(0)}</div>
-        </div>
-        <div class="cfg-col p2">
-          <span class="cfg-name">Player 2 &mdash; Krum</span>
-          <div class="cfg-radios" id="p2Radios">${radioFor(1)}</div>
-        </div>
+      <div class="cfg-grid" style="--cfg-cols: ${cfgGridCols}">
+        ${cfgCols.join("")}
       </div>
       <p class="cfg-hint">Specialist concentrates +5/+4 tokens on its top letters. Generalist trades down to a flat mid-value pool and weighs denying opp heavily. Balanced sits between.</p>`;
     showModal({
@@ -2146,31 +2389,43 @@
   }
 
   function wireStartDialog() {
-    const handleRadio = (input) => {
-      const m = input.name.match(/^p(\d)-type$/);
+    const handleChange = (sel) => {
+      const m = sel.name.match(/^p(\d)-type$/);
       if (!m) return;
       const idx = parseInt(m[1], 10) - 1;
-      const v = input.value;
+      const v = sel.value;
       playerConfig[idx] = (v === "human") ? { type: "human" } : { type: "ai", strategy: v };
     };
-    document.querySelectorAll('#modal input[type="radio"]').forEach(input => {
-      input.addEventListener("change", () => handleRadio(input));
+    document.querySelectorAll('#modal select.cfg-select').forEach(sel => {
+      sel.addEventListener("change", () => handleChange(sel));
+    });
+    document.querySelectorAll("#modal .count-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const n = parseInt(btn.dataset.count, 10);
+        if (Number.isFinite(n) && n >= MIN_PLAYERS && n <= MAX_PLAYERS) {
+          numPlayers = n;
+          showStartDialog();  // re-render with new column layout
+        }
+      });
     });
     document.querySelectorAll("#modal .preset-btn").forEach(btn => {
       btn.addEventListener("click", () => {
         const preset = btn.dataset.preset;
-        if (preset === "hh") {
-          playerConfig = [{ type: "human" }, { type: "human" }];
-        } else if (preset === "ha") {
-          playerConfig = [{ type: "human" }, { type: "ai", strategy: "balanced" }];
-        } else if (preset === "aa") {
-          // Spec vs Gen by design — exercises both AI styles in the matchup.
-          playerConfig = [
-            { type: "ai", strategy: "specialist" },
-            { type: "ai", strategy: "generalist" },
-          ];
+        const aiStrats = ["specialist", "generalist", "balanced", "balanced"];
+        const newCfg = playerConfig.map((c, i) => ({ ...c }));
+        for (let i = 0; i < MAX_PLAYERS; i++) {
+          if (preset === "hh") {
+            newCfg[i] = { type: "human" };
+          } else if (preset === "ha") {
+            // P1 human, the rest balanced AI.
+            newCfg[i] = i === 0 ? { type: "human" } : { type: "ai", strategy: "balanced" };
+          } else if (preset === "aa") {
+            // Alternate strategies so different styles get exercised.
+            newCfg[i] = { type: "ai", strategy: aiStrats[i % aiStrats.length] };
+          }
         }
-        showStartDialog();  // re-render with new defaults
+        playerConfig = newCfg;
+        showStartDialog();
       });
     });
   }
@@ -2337,9 +2592,27 @@
     return scoreWordForPlayer(word, p) - strategyOppWeight(p) * scoreWordForPlayer(word, opp);
   }
 
+  // Pick the AI's "primary opponent" for net-score / oppPenalty math: the player
+  // (not self) currently leading on score; ties broken by lowest playerIdx. With
+  // N=2 this is simply the other player. With N=1 returns a synthetic "no
+  // opponent" stand-in so the AI plays purely greedy.
+  function primaryOppFor(playerIdx) {
+    let best = null;
+    for (let i = 0; i < game.numPlayers; i++) {
+      if (i === playerIdx) continue;
+      if (best == null || game.players[i].score > game.players[best].score) best = i;
+    }
+    if (best == null) {
+      // Solo mode: return a zero-strength dummy so netScore reduces to my own score.
+      return { score: 0, isAI: false, strategy: "balanced", coal: 0,
+               assigned: {}, pool: [], claimedBigrams: [], bigramAssigned: {} };
+    }
+    return game.players[best];
+  }
+
   function aiBid(playerIdx) {
     const p = game.players[playerIdx];
-    const opp = game.players[1 - playerIdx];
+    const opp = primaryOppFor(playerIdx);
     const remaining = NUM_STATIONS - game.station + 1;  // includes current
     if (remaining <= 0) return 0;
     // Value of winning this round = spread between net-best word in slot A vs slot B.
@@ -2378,7 +2651,7 @@
   // pass 2 to force a word pick.
   function aiPickAction(playerIdx, allowBigram) {
     const p = game.players[playerIdx];
-    const opp = game.players[1 - playerIdx];
+    const opp = primaryOppFor(playerIdx);
     const stationsLeft = NUM_STATIONS - game.station;  // remaining rounds AFTER this one
 
     // Best word over empty slots, with random tie-break among picks within 0.5.
@@ -2442,7 +2715,7 @@
 
   function aiAssignFlow(playerIdx, onDone) {
     const p = game.players[playerIdx];
-    const opp = game.players[1 - playerIdx];
+    const opp = primaryOppFor(playerIdx);
     const need = [...neededLetters(playerIdx)];
     if (need.length === 0) { onDone(); return; }
     // Reshape the pool first (split high tokens, merge low ones) — sum-maximizing.
