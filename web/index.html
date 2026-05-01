@@ -999,35 +999,63 @@
     }
     return count;
   }
-  // Average occurrences per word across all PROMPTS — used by the AI to estimate
-  // the expected number of times a claimed bigram will fire over the rest of the
-  // game. Computed once at startup.
-  const BIGRAM_FREQ = (() => {
+  // Per-category average occurrences. Keyed by category, then bigram (for
+  // BIGRAM_FREQ_BY_CAT) or scalar (for REPEAT_FREQ_BY_CAT). The AI's EV calc
+  // sums these over the actual upcoming station categories rather than the
+  // all-PROMPTS average — the telegram pager already shows future categories,
+  // so the AI uses that same lookahead when valuing a claim.
+  const BIGRAM_FREQ_BY_CAT = (() => {
     const out = {};
-    for (const bg of BIGRAMS) {
-      let total = 0, n = 0;
-      for (const cat of Object.keys(PROMPTS)) {
-        for (const w of PROMPTS[cat]) { total += bigramOccurrences(w, bg); n++; }
+    for (const cat of Object.keys(PROMPTS)) {
+      const inner = {};
+      const list = PROMPTS[cat];
+      for (const bg of BIGRAMS) {
+        let total = 0;
+        for (const w of list) total += bigramOccurrences(w, bg);
+        inner[bg] = list.length ? total / list.length : 0;
       }
-      out[bg] = n ? total / n : 0;
+      out[cat] = inner;
     }
     return out;
   })();
-  // Average count of doubled-letter events per word (positions where w[i] === w[i-1]).
-  // Used by the AI to estimate how often a claimed REPEAT will fire over the rest
-  // of the game. Doesn't account for bigrams stealing some doubled-letter fires —
-  // an over-estimate by design, since the EV threshold to claim is conservative.
-  const REPEAT_FREQ = (() => {
-    let total = 0, n = 0;
+  const REPEAT_FREQ_BY_CAT = (() => {
+    const out = {};
     for (const cat of Object.keys(PROMPTS)) {
-      for (const w of PROMPTS[cat]) {
+      const list = PROMPTS[cat];
+      let total = 0;
+      for (const w of list) {
         let c = 0;
         for (let i = 1; i < w.length; i++) if (w[i] === w[i-1]) c++;
-        total += c; n++;
+        total += c;
       }
+      out[cat] = list.length ? total / list.length : 0;
     }
-    return n ? total / n : 0;
+    return out;
   })();
+  // Expected per-player firings of `bg` across all stations from `fromStation`
+  // through the end of the game (current station inclusive). Each station
+  // contributes the avg-per-word for its two prompt categories, since both
+  // picks end up typed by both players. Falls back to 0 if cards aren't yet
+  // generated (e.g., during start-of-game wiring).
+  function bigramUsesAhead(bg, fromStation) {
+    if (!game || !game.cards) return 0;
+    let total = 0;
+    for (let s = fromStation; s <= NUM_STATIONS; s++) {
+      const tpl = game.cards[s - 1].template;
+      total += (BIGRAM_FREQ_BY_CAT[tpl.a]?.[bg] || 0)
+            +  (BIGRAM_FREQ_BY_CAT[tpl.b]?.[bg] || 0);
+    }
+    return total;
+  }
+  function repeatUsesAhead(fromStation) {
+    if (!game || !game.cards) return 0;
+    let total = 0;
+    for (let s = fromStation; s <= NUM_STATIONS; s++) {
+      const tpl = game.cards[s - 1].template;
+      total += (REPEAT_FREQ_BY_CAT[tpl.a] || 0) + (REPEAT_FREQ_BY_CAT[tpl.b] || 0);
+    }
+    return total;
+  }
 
 
   // ---------- State ----------
@@ -2194,14 +2222,24 @@
   // long as the combined sum gain meets the threshold. Token count stays stable
   // (split +1, merge −1).
   //
-  //   specialist  — threshold = 6. Only the (+5 split, −2 merge) pair survives,
-  //                 leaving +4 × 4 + +3 × 3 + +2 × 4 + +1 × 4 (sum +30, count 27).
-  //                 Tuned via simulation: 5000-game CPU-vs-CPU run lands at
-  //                 50.1% win rate with specBoldnessMul = 1.0 (see below).
+  //   specialist  — threshold = 4. Allows the (+5,−2) and (+4,−1) split/merge pairs.
+  //                 Lowered from 6 once bigram-claiming was enabled — pure +4/+3/+2/+1
+  //                 specialists are too brittle to bigram-bonus opponents; this gentler
+  //                 concentration keeps the CPU-vs-CPU win rate near 50/50 when both
+  //                 AIs claim ~1 bigram/game. See sim/sim_bigram.js.
   //   generalist  — threshold = 1. Floods the pool with medium tokens; default
   //                 pool ends ~+48 sum, mostly +1/+2/+3.
   //   balanced    — threshold = 1 (same as generalist).
-  const SPEC_TRADE_THRESHOLD = 6;
+  const SPEC_TRADE_THRESHOLD = 4;
+
+  // Bigram-claim EV threshold for aiPickAction. The base bar lets the AI claim
+  // the first attractive bigram it sees; each subsequent claim raises the bar
+  // by the per-claim penalty so the AI naturally tops out at 1–2 claims per
+  // game even when EVs stay positive. Tuned via sim/sim_bigram.js to keep the
+  // SPEC-vs-GEN win rate near 50/50.
+  const AI_BIGRAM_BASE_THRESHOLD = 2;
+  const AI_BIGRAM_PER_CLAIM_PENALTY = 6;
+
   function aiOptimizePool(p, opp, stationsLeft) {
     const threshold = p.strategy === "specialist" ? SPEC_TRADE_THRESHOLD : 1;
     let guard = 60;
@@ -2362,13 +2400,13 @@
 
     // Bigram EV: for each candidate, estimate per-use gain by comparing the bigram
     // payout (assumed +0 token assigned + BIGRAM_BONUS = +5) against the player's
-    // actual letter values for the underlying two letters. Multiply by expected
-    // future uses across remaining rounds.
+    // actual letter values for the underlying two letters. `*UsesAhead` look at
+    // the actual upcoming categories (game.cards from this station forward) so
+    // the AI can prefer bigrams that match what the telegram pager will reveal.
     const avgPoolVal = p.pool.length
       ? p.pool.reduce((a, b) => a + b.val, 0) / p.pool.length
       : EMPTY_POOL_PENALTY;
     const letterVal = (c) => (c in p.assigned) ? p.assigned[c] : avgPoolVal;
-    const stationsAhead = stationsLeft + 1;
     const assumedBigramTokenVal = 0;  // AI plans to spend a +0 (or worst free) token
     let bestBg = null;
     for (const bg of game.bigramPool) {
@@ -2376,11 +2414,11 @@
       if (bg === REPEAT_TOKEN) {
         // REPEAT replaces a single letter per fire (vs. two for a real bigram),
         // so its alternative cost is one avg-pool letter and it scores REPEAT_BONUS.
-        expectedUses = REPEAT_FREQ * 2 * stationsAhead;
+        expectedUses = repeatUsesAhead(game.station);
         letterCost = avgPoolVal;
         bonus = REPEAT_BONUS;
       } else {
-        expectedUses = (BIGRAM_FREQ[bg] || 0) * 2 * stationsAhead;
+        expectedUses = bigramUsesAhead(bg, game.station);
         letterCost = letterVal(bg[0]) + letterVal(bg[1]);
         bonus = BIGRAM_BONUS;
       }
@@ -2389,13 +2427,14 @@
       if (bestBg == null || ev > bestBg.ev) bestBg = { bg, ev };
     }
 
-    // Take the bigram only if EV clearly clears the opportunity cost. Sim shows
-    // bigrams are a trap for naive AIs: at threshold 3 SPEC claims ~0.9/game and
-    // its win rate drops from 50% to 31%; at threshold ≥5 SPEC never claims and
-    // win rate stays at 50%. Keep the bar high until a smarter heuristic exists
-    // — the mechanic is still available to humans, and the AI scores opp's
-    // claimed bigrams correctly via scoreWordForPlayer when picking words.
-    if (bestBg && bestBg.ev > 8) {
+    // Claim-count-aware threshold. Lookahead-based EV is more accurate than the
+    // old all-PROMPTS average, so we can afford a lower base bar; the per-claim
+    // ramp keeps the AI from stacking bigrams (target ~1, occasionally 2 per
+    // game) and naturally tightens late-game as expectedUses falls with
+    // stationsAhead. Tuned via sim to land at ~50% SPEC vs. GEN win rate.
+    const claimed = p.claimedBigrams.length;
+    const bigramThreshold = AI_BIGRAM_BASE_THRESHOLD + claimed * AI_BIGRAM_PER_CLAIM_PENALTY;
+    if (bestBg && bestBg.ev > bigramThreshold) {
       return { kind: "bigram", bg: bestBg.bg };
     }
     return { kind: "word", slot: wordPick.slot, word: wordPick.w };
@@ -2442,11 +2481,11 @@
     // below (more negative than) any letter rank.
     const targetRank = (c, freqInRound) => {
       if (c === REPEAT_TOKEN) {
-        const expectedUses = REPEAT_FREQ * 2 * (NUM_STATIONS - game.station + 1);
+        const expectedUses = repeatUsesAhead(game.station);
         return -10 - expectedUses * REPEAT_BONUS;
       }
       if (c.length === 2) {
-        const expectedUses = (BIGRAM_FREQ[c] || 0) * 2 * (NUM_STATIONS - game.station + 1);
+        const expectedUses = bigramUsesAhead(c, game.station);
         return -10 - expectedUses * BIGRAM_BONUS;
       }
       return letterRank(c, freqInRound);
