@@ -522,6 +522,12 @@
     display: flex; gap: 6px; justify-content: center;
     margin: 4px 0 12px;
   }
+  .cfg-presets .preset-btn.active {
+    background: var(--brass-dark);
+    color: #1a1410;
+    border-color: var(--brass);
+    font-weight: bold;
+  }
   .cfg-grid {
     display: grid;
     grid-template-columns: repeat(var(--cfg-cols, 2), minmax(0, 1fr));
@@ -2368,12 +2374,23 @@
         </div>`);
     }
     const cfgGridCols = numPlayers === 4 ? 2 : numPlayers;
+    // Highlight whichever preset matches the current dropdown selection so
+    // it's obvious that clicking a preset actually applies. Matching is on
+    // player type (human / ai) only, not the specific AI strategy — that
+    // way "All CPU" stays lit if the user nudges one player's strategy in
+    // the dropdowns after applying the preset.
+    const allHuman = playerConfig.slice(0, numPlayers).every(c => c?.type === "human");
+    const allAI    = playerConfig.slice(0, numPlayers).every(c => c?.type === "ai");
+    const humanVsAI = playerConfig[0]?.type === "human"
+      && playerConfig.slice(1, numPlayers).every(c => c?.type === "ai");
+    const activePreset = allHuman ? "hh" : (allAI ? "aa" : (humanVsAI ? "ha" : null));
+    const presetCls = (p) => "ghost preset-btn" + (activePreset === p ? " active" : "");
     const cfg = `
       ${countRow}
       <div class="cfg-presets">
-        <button class="ghost preset-btn" data-preset="hh">All Human</button>
-        <button class="ghost preset-btn" data-preset="ha">Human vs CPU${numPlayers > 2 ? "s" : ""}</button>
-        <button class="ghost preset-btn" data-preset="aa">All CPU</button>
+        <button class="${presetCls("hh")}" data-preset="hh">All Human</button>
+        <button class="${presetCls("ha")}" data-preset="ha">Human vs CPU${numPlayers > 2 ? "s" : ""}</button>
+        <button class="${presetCls("aa")}" data-preset="aa">All CPU</button>
       </div>
       <div class="cfg-grid" style="--cfg-cols: ${cfgGridCols}">
         ${cfgCols.join("")}
@@ -2394,7 +2411,13 @@
       if (!m) return;
       const idx = parseInt(m[1], 10) - 1;
       const v = sel.value;
+      const oldType = playerConfig[idx]?.type;
       playerConfig[idx] = (v === "human") ? { type: "human" } : { type: "ai", strategy: v };
+      // Re-render only on human↔ai transitions so the preset-button
+      // highlight stays in sync; strategy-only changes don't affect
+      // which preset matches so we skip the re-render and preserve
+      // dropdown focus.
+      if (oldType !== playerConfig[idx].type) showStartDialog();
     };
     document.querySelectorAll('#modal select.cfg-select').forEach(sel => {
       sel.addEventListener("change", () => handleChange(sel));
